@@ -358,9 +358,10 @@ def test_resize_geometry():
 
 
 def test_command_never_uses_shell(tmp_path):
-    cmd = ip.build_command(MAGICK, Path("/x/a b.png"), "/o/t.tmp", ip.web_preset())
+    src, tmp = tmp_path / "a b.png", tmp_path / "t.tmp"
+    cmd = ip.build_command(MAGICK, src, str(tmp), ip.web_preset())
     assert isinstance(cmd, list)
-    assert "/x/a b.png" in cmd and cmd[-1] == "WEBP:/o/t.tmp"
+    assert str(src.resolve()) in cmd and cmd[-1] == f"WEBP:{tmp}"
 
 
 def test_parse_writable_formats():
