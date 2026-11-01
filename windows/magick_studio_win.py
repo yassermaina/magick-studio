@@ -29,7 +29,8 @@ from PySide6.QtGui import (  # noqa: E402
     QAction, QColor, QDesktopServices, QIcon, QImage, QImageReader, QKeySequence, QPixmap,
 )
 from PySide6.QtWidgets import (  # noqa: E402
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
+    QGraphicsOpacityEffect, QGroupBox,
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter,
     QStackedWidget, QStyle, QToolBar, QToolButton, QVBoxLayout, QWidget,
@@ -47,6 +48,12 @@ def resource_path(*parts: str) -> Path:
     """Path to bundled data, both from source and from a PyInstaller build."""
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     return base.joinpath(*parts)
+
+
+def secondary(label: QLabel) -> QLabel:
+    """Dim a label for secondary text. Disabled text is too faint in some Windows styles."""
+    label.setGraphicsEffect(QGraphicsOpacityEffect(label, opacity=0.7))
+    return label
 
 
 def load_image(magick: ip.Magick, path: Path, size: int) -> QImage:
@@ -243,7 +250,7 @@ class MainWindow(QMainWindow):
         self.preview = PreviewLabel()
         self.preview_info = QLabel("Select an image to preview it", alignment=Qt.AlignCenter,
                                    wordWrap=True)
-        self.preview_info.setEnabled(False)
+        secondary(self.preview_info)
         preview_box = QWidget()
         pv = QVBoxLayout(preview_box)
         pv.setContentsMargins(0, 6, 0, 0)
@@ -317,7 +324,7 @@ class MainWindow(QMainWindow):
         self.format_box.currentIndexChanged.connect(lambda *_: self.update_state())
         of.addRow("Format", self.format_box)
         self.format_note = QLabel(wordWrap=True)
-        self.format_note.setEnabled(False)
+        secondary(self.format_note)
         if self.magick and "avif" not in self.formats:
             self.format_note.setText("AVIF is not available in this ImageMagick build.")
         of.addRow("", self.format_note)
@@ -331,7 +338,7 @@ class MainWindow(QMainWindow):
         self.quality_label = QLabel("Quality")
         of.addRow(self.quality_label, qrow)
         self.quality_note = QLabel(wordWrap=True)
-        self.quality_note.setEnabled(False)
+        secondary(self.quality_note)
         of.addRow("", self.quality_note)
         self.strip = QCheckBox("Remove metadata (EXIF, GPS); keeps colour profile", checked=True)
         of.addRow(self.strip)

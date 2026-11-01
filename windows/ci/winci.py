@@ -277,8 +277,9 @@ def cmd_screenshot(app_exe: str, samples: str, out_png: str, dark: bool = False)
         user32.SetWindowPos(hwnd, 0, (sw - w) // 2, max(0, (sh - 48 - h) // 2), w, h, 0x0040)
         user32.SetForegroundWindow(hwnd)
         time.sleep(8)                                    # thumbnails and preview load
-        rect = wintypes.RECT()
-        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        rect = wintypes.RECT()                           # visible frame, without the
+        ctypes.windll.dwmapi.DwmGetWindowAttribute(       # invisible resize borders
+            hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect))   # DWMWA_EXTENDED_FRAME_BOUNDS
         from PySide6.QtGui import QGuiApplication
         app = QGuiApplication.instance() or QGuiApplication([])
         shot = app.primaryScreen().grabWindow(0, rect.left, rect.top,

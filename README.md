@@ -1,23 +1,47 @@
 # Magick Studio
 
-A simple, native GNOME app for resizing, compressing, converting and optimizing
-images with [ImageMagick](https://imagemagick.org), without typing long command lines.
+A simple desktop app for resizing, compressing, converting and optimizing images with
+[ImageMagick](https://imagemagick.org), without typing long command lines.
 
-Built with Python 3, GTK 4, Libadwaita and PyGObject. Follows the system light/dark style.
+- **Linux:** a native GNOME app (GTK 4 / Libadwaita). Install from source with `install.sh`.
+- **Windows (new in v1.1.0):** a Qt (PySide6) app with ImageMagick built in. Install it
+  with a normal setup program. No administrator rights or separate ImageMagick needed.
 
-> **Magick Studio v1.0.0 is the first stable release, for Linux.** Windows support is
-> under investigation and planned for a future version. See [Windows roadmap](#windows-roadmap).
+Both editions share the same image-processing engine and have the same features.
 
-![Magick Studio main window (light style)](docs/screenshots/main-light.png)
+## Downloads
 
-![Processing results with summary (dark style)](docs/screenshots/summary-dark.png)
+| Platform | Get it | Notes |
+| --- | --- | --- |
+| Windows x64 | [`MagickStudio-Setup-1.1.0-x64.exe`](https://github.com/yassermaina/magick-studio/releases/latest) from the latest release | Per-user installer, about 37 MB. See [Windows installation](#windows-installation). |
+| Linux | Source code (`git clone` or the release's source archive) | Run `./install.sh`. See [Linux installation](#linux-installation). |
 
-*Screenshots of the real application on Fedora 44.*
+All versions are listed on the [Releases](https://github.com/yassermaina/magick-studio/releases) page.
+
+## Screenshots
+
+### Linux
+
+![Magick Studio on Linux, main window (light style)](docs/screenshots/main-light.png)
+
+![Magick Studio on Linux, processing results with summary (dark style)](docs/screenshots/summary-dark.png)
+
+*The GTK app on Fedora 44 (GNOME).*
+
+### Windows
+
+![Magick Studio on Windows, light mode](docs/screenshots/windows-light.png)
+
+![Magick Studio on Windows, dark mode](docs/screenshots/windows-dark.png)
+
+*The packaged Windows app, captured automatically on a GitHub-hosted Windows Server 2025
+runner (the same Windows build as Windows 11 24H2). It follows the Windows light/dark
+app setting.*
 
 ## Features
 
 - **Import** with *Add Images*, *Add Folder* (including subfolders), drag and drop, or
-  `magick-studio photo.jpg ~/Pictures/trip`. Shows thumbnails, a preview, dimensions,
+  from the command line (`magick-studio photo.jpg ~/Pictures/trip` on Linux). Shows thumbnails, a preview, dimensions,
   format and file size. Damaged or unsupported files are flagged and skipped.
 - **Resize** by width and/or height (0 = automatic). Keep the aspect ratio or force exact
   dimensions. Enlarging is off by default. Turn resizing off to keep original dimensions.
@@ -44,7 +68,19 @@ Image handling details:
 - Supported inputs: JPEG, PNG, WebP, AVIF, GIF, BMP, TIFF, HEIC/HEIF and JPEG XL, as far
   as your ImageMagick can read them. Animated or multi-page files use the first frame.
 
-## Supported distributions
+Platform differences:
+
+| | Linux | Windows |
+| --- | --- | --- |
+| Interface | GTK 4 / Libadwaita | Qt 6 (PySide6) |
+| ImageMagick | From your distribution (6 or 7) | ImageMagick 7.1.2 built in |
+| AVIF output | Depends on your distribution's ImageMagick | Included |
+| Light/dark style | Follows GNOME | Follows the Windows app mode |
+| Installation | Per user, from source (`install.sh`) | Per-user setup program |
+
+## Linux installation
+
+### Supported distributions
 
 | Distribution | Status | Tested with |
 | --- | --- | --- |
@@ -57,7 +93,7 @@ Other distributions with GTK ≥ 4.14, Libadwaita ≥ 1.5, PyGObject and ImageMa
 should work, but the installer only installs packages automatically on Fedora and
 Debian/Ubuntu-based systems.
 
-## Requirements
+### Requirements
 
 - Python 3.10 or newer
 - GTK 4.14+ and Libadwaita 1.5+, with PyGObject bindings
@@ -65,11 +101,12 @@ Debian/Ubuntu-based systems.
 - Optional: `cwebp` (package `webp` / `libwebp-tools`), needed on Ubuntu 24.04. See
   [Known limitations](#known-limitations).
 
-## Installation
+### Installing
 
 Download or clone the source, then run the installer **as your normal user** (not root):
 
 ```bash
+git clone https://github.com/yassermaina/magick-studio.git
 cd magick-studio
 ./install.sh
 ```
@@ -94,7 +131,7 @@ Options:
 If `~/.local/bin` was not on your `PATH` yet, open a new terminal (or log out and back
 in) before typing `magick-studio`. The app-menu launcher works right away.
 
-### Fedora
+#### Fedora
 
 ```bash
 ./install.sh
@@ -104,7 +141,7 @@ Packages installed when missing:
 `python3 python3-gobject gtk4 libadwaita gobject-introspection ImageMagick` (plus
 `libglvnd-gles` on minimal installs that lack OpenGL ES).
 
-### Ubuntu 24.04 or newer
+#### Ubuntu 24.04 or newer
 
 ```bash
 ./install.sh
@@ -113,7 +150,7 @@ Packages installed when missing:
 Packages installed when missing:
 `python3 python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 imagemagick webp`.
 
-### Debian 13 or newer
+#### Debian 13 or newer
 
 ```bash
 ./install.sh
@@ -121,7 +158,7 @@ Packages installed when missing:
 
 Same packages as Ubuntu. Debian 12 is not supported (its Libadwaita is too old).
 
-### Manual dependency installation
+#### Manual dependency installation
 
 ```bash
 # Fedora
@@ -133,7 +170,7 @@ sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 imagemagick webp
 Then run `./install.sh --skip-deps`, or start the app directly from the source folder
 with `python3 main.py`.
 
-## Usage
+### Using Magick Studio on Linux
 
 Open **Magick Studio** from the application menu, or run:
 
@@ -157,7 +194,7 @@ magick-studio ~/Pictures/trip     # open with a folder already loaded
 Folder imports skip hidden folders, folders named `output`, and your chosen output
 folder, so processed images are never imported again.
 
-## Uninstallation
+### Uninstalling on Linux
 
 ```bash
 ./uninstall.sh
@@ -167,6 +204,104 @@ This removes only the files listed in the installation table. Your images, `outp
 folders and system packages (ImageMagick, GTK, …) are left untouched. A
 `~/.local/bin/magick-studio` that was not created by the installer is never removed
 or overwritten.
+
+## Windows installation
+
+### Requirements
+
+- Windows 10 or 11, **64-bit (x64)**
+- About 150 MB of disk space
+- Nothing else. ImageMagick and Python are included.
+
+### Installing
+
+1. Open the [latest release](https://github.com/yassermaina/magick-studio/releases/latest).
+2. Under **Assets**, download `MagickStudio-Setup-1.1.0-x64.exe`.
+3. *(Optional)* Check the download. In PowerShell, run
+   `Get-FileHash .\MagickStudio-Setup-1.1.0-x64.exe` and compare the result with the
+   SHA-256 in the release notes.
+4. Double-click the installer. The installer is not code-signed, so Windows SmartScreen
+   may show **"Windows protected your PC"**. Click **More info**, then **Run anyway**.
+5. Accept the license and keep the default folder (`%LOCALAPPDATA%\Programs\Magick Studio`).
+   Optionally tick **Create a desktop shortcut**. Administrator rights are not needed,
+   and Magick Studio is installed for your user account only.
+6. Click **Install**, then **Finish** to start Magick Studio.
+7. Later, open **Magick Studio** from the Start menu.
+
+To **update**, run the newer installer. It replaces the old version in place.
+
+### Using Magick Studio on Windows
+
+1. Click **Add Images** or **Add Folder**, or drag images or folders onto the window.
+2. Pick a preset, or adjust format, quality, metadata and resize settings.
+3. Optionally click **Choose Folder…** for the output (default: `output` next to each image).
+4. Click **Start Processing**. When it finishes, the summary can open the output folder.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+O | Add images |
+| Ctrl+Shift+O | Add folder |
+| Delete | Remove selected images from the list |
+| Ctrl+Enter | Start processing |
+| F1 | Show shortcuts |
+| Ctrl+Q | Quit |
+
+### Uninstalling on Windows
+
+Open **Settings → Apps → Installed apps**, find **Magick Studio**, and choose
+**Uninstall**. This removes the program folder, the shortcuts and the Apps entry.
+Your images and `output` folders are never touched.
+
+### What was tested on Windows
+
+Every change is built and tested on GitHub-hosted **Windows Server 2025 x64** runners
+(build 26100). Each run:
+
+- runs the backend tests (52 passed; 5 Linux- or `cwebp`-specific tests skipped) and the
+  Qt interface tests (10 passed) on real Windows, against the bundled ImageMagick
+- checks the packaged app for all required files (Qt plugins, MSVC runtime, ImageMagick,
+  licenses)
+- converts real images with the packaged app, with Python and the runner's own
+  ImageMagick removed from `PATH`
+- opens the packaged app's window and loads images
+- checks that no console windows flash while images are processed
+- installs the app silently, checks the Start Menu shortcut and the per-user Apps entry,
+  converts images with the installed app, re-installs over it, uninstalls it, and checks
+  that the user's images were not touched
+
+## Troubleshooting
+
+**Windows: "Windows protected your PC" when running the installer.** The installer is
+not code-signed. Click **More info**, then **Run anyway**. Check the SHA-256 first if
+you want to be sure the file is genuine (step 3 above).
+
+**Windows: "ImageMagick 7 (magick.exe) was not found".** The installation is
+incomplete, for example because antivirus software quarantined `magick.exe`. Reinstall
+Magick Studio, and if needed allow
+`%LOCALAPPDATA%\Programs\Magick Studio\_internal\imagemagick\magick.exe` in your
+antivirus.
+
+**Windows: the app doesn't start on Windows on ARM.** Only x64 builds are provided, and
+they have not been tested on ARM64 devices.
+
+**Linux: "ImageMagick not found".** Install ImageMagick (`sudo dnf install ImageMagick`
+or `sudo apt install imagemagick`), or rerun `./install.sh`.
+
+**Linux: `magick-studio: command not found`.** `~/.local/bin` is not on your `PATH` yet.
+Open a new terminal or log out and back in, or start the app from the application menu.
+
+**Linux: the app won't start on Debian 12 or Ubuntu 22.04.** These ship a Libadwaita that
+is too old. See [Supported distributions](#supported-distributions).
+
+**WebP quality has no effect (Ubuntu 24.04).** Install `cwebp` (`sudo apt install webp`).
+See below.
+
+**AVIF is missing from the format list.** Your ImageMagick can't write AVIF. On Fedora,
+try `./install.sh --with-avif`. The Windows edition always includes AVIF.
+
+**A processed image is larger than the original.** This happens with small or already
+optimized images. The summary shows it as "% larger". Try a lower quality or a different
+format.
 
 ## Known limitations
 
@@ -184,21 +319,34 @@ or overwritten.
   The installer installs the APT packages before it can check the Libadwaita version,
   then stops with a clear message. Ubuntu 22.04 ships Libadwaita 1.1 and is also
   unsupported (not tested).
+- **Windows versions:** automated tests run on Windows Server 2025 x64 (Windows 11 24H2
+  codebase). The app has **not** been tested on Windows 10 or on a Windows 11 desktop PC.
+  It is expected to work on both (x64), but this is not verified yet.
+- **Windows on ARM:** not supported. Only an x64 build is provided, and it has not been
+  tested under ARM64 emulation.
+- **Windows drag and drop:** implemented, but only covered by the automated tests through
+  the same code path that *Add Images* uses, not by simulating a real mouse drag.
+- **Windows long paths:** paths longer than 260 characters have not been tested.
+- **Windows installer:** not code-signed (see [Troubleshooting](#troubleshooting)).
+- **Windows size:** the installed app is about 136 MB, mostly Qt and ImageMagick.
 - **Container GUI tests:** on Ubuntu and Debian the GUI was tested under Xvfb (X11) in
   containers, not on a full desktop session.
 
 ## Development
 
 ```text
-main.py              GTK 4 / Libadwaita user interface
-image_processor.py   ImageMagick backend (no GTK dependency)
-tests/               pytest suite
-assets/icon.svg      application icon
-install.sh           per-user installer
-uninstall.sh         uninstaller
-docs/screenshots/    README screenshots
-experimental/windows/  Windows proof of concept (not installed, not supported)
+image_processor.py   shared ImageMagick backend (no GUI dependency)
+main.py              Linux interface (GTK 4 / Libadwaita)
+install.sh           Linux per-user installer
+uninstall.sh         Linux uninstaller
+windows/             Windows interface (PySide6), build script, installer, CI checks
+tests/               backend and GTK tests
+assets/              icons (SVG for Linux, ICO for Windows)
+docs/                screenshots and the Windows feasibility study
 ```
+
+PySide6 is only used by the Windows edition. Linux users don't need it.
+See [`windows/README.md`](windows/README.md) for building and testing the Windows edition.
 
 All external programs run through `subprocess` with argument lists (never `shell=True`),
 absolute paths and an explicit output coder. This makes spaces, Unicode, leading dashes,
@@ -231,30 +379,32 @@ The suite covers:
 GUI tests are skipped when no display is available. `cwebp` tests are skipped when
 `cwebp` is not installed.
 
-A GitHub Actions workflow (`.github/workflows/tests.yml`) runs the installer and tests
-on Ubuntu 24.04, plus the tests in Debian 13 and Fedora 44 containers.
+GitHub Actions runs two workflows:
 
-## Windows roadmap
+- `.github/workflows/tests.yml` runs the Linux installer and tests on Ubuntu 24.04, plus
+  the tests in Debian 13 and Fedora 44 containers.
+- `.github/workflows/windows.yml` builds and tests the Windows edition on
+  `windows-2025`. It uploads the installer, a portable build, test reports and
+  screenshots as artifacts. See [What was tested on Windows](#what-was-tested-on-windows).
 
-Windows is **not supported in v1.0.0**. A feasibility study and a PySide6 proof of
-concept live in [`experimental/windows/`](experimental/windows/README.md). They have
-been tested **on Fedora only, never on Windows**, and are not installed by `install.sh`.
+Windows tests (on Windows, after `windows\build.ps1 -Steps imagemagick`):
 
-Planned approach (not implemented yet):
+```powershell
+$env:MAGICK_STUDIO_MAGICK = "$PWD\build\windows\imagemagick\magick.exe"
+python -m pytest tests windows\tests
+```
 
-1. **Shared backend.** Keep `image_processor.py` for both platforms and apply the
-   prepared Windows changes: no console windows, Windows-only `magick.exe` detection,
-   and a bundled-ImageMagick path.
-2. **PySide6 interface for Windows.** Bring the proof of concept to feature parity. GTK 4
-   and Libadwaita remain the Linux interface.
-3. **ImageMagick integration.** Bundle `magick.exe` from the official portable Windows build.
-4. **Windows tests.** Add tests for drive letters, Unicode and UNC paths, long paths,
-   console-window suppression and cancellation, run on a Windows CI runner.
-5. **Packaging.** PyInstaller `--onedir --windowed` build with a `.ico` icon.
-6. **Installer.** Inno Setup per-user installer with a Start Menu entry and a safe uninstaller.
-7. **Verification.** Manual testing on Windows 10 and Windows 11 (x64, then ARM64).
-8. **Release.** A Windows release, only after the steps above pass.
+## Releases
+
+| Version | Platforms |
+| --- | --- |
+| [v1.1.0](https://github.com/yassermaina/magick-studio/releases/tag/v1.1.0) | Linux and Windows (x64 installer) |
+| [v1.0.0](https://github.com/yassermaina/magick-studio/releases/tag/v1.0.0) | Linux |
+
+See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The Windows edition includes third-party software
+(ImageMagick, Qt/PySide6, Python) under their own licenses. See
+[`windows/THIRD-PARTY-NOTICES.txt`](windows/THIRD-PARTY-NOTICES.txt).
