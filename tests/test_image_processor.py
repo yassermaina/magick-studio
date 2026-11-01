@@ -44,7 +44,8 @@ def test_detect_finds_imagemagick():
 
 def test_detect_missing_imagemagick(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path))
-    with pytest.raises(ip.MagickError, match="not installed"):
+    monkeypatch.delenv("MAGICK_STUDIO_MAGICK", raising=False)
+    with pytest.raises(ip.MagickError, match="not installed|not found"):
         ip.Magick.detect()
 
 

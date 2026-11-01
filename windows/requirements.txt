@@ -1,0 +1,4 @@
+# Windows build and test dependencies (not needed on Linux).
+PySide6-Essentials==6.12.0
+pyinstaller==6.22.3
+pytest==9.2.0
