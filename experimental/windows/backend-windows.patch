@@ -1,0 +1,72 @@
+--- a/image_processor.py	2026-11-01 13:52:22.700865658 +0000
++++ b/image_processor.py	2026-11-01 13:52:22.716709222 +0000
+@@ -12,6 +12,7 @@
+ import re
+ import shutil
+ import subprocess
++import sys
+ import tempfile
+ import threading
+ from dataclasses import dataclass, field
+@@ -40,6 +41,10 @@
+ DEFAULT_QUALITY = 82
+ TEMP_PREFIX = ".magick-studio-"
+ 
++# On Windows, magick.exe is a console program: without this flag every call
++# from the windowed app would flash a console window.
++POPEN_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
++
+ 
+ def _umask() -> int:
+     mask = os.umask(0)
+@@ -144,9 +149,13 @@
+     @classmethod
+     def detect(cls) -> "Magick":
+         cwebp = shutil.which("cwebp")
+-        magick = shutil.which("magick")
++        magick = os.environ.get("MAGICK_STUDIO_MAGICK") or shutil.which("magick")
+         if magick:
+             return cls([magick], [magick, "identify"], 7, cwebp)
++        # Windows has an unrelated C:\Windows\System32\convert.exe (disk tool),
++        # and ImageMagick 6 is not supported there.
++        if sys.platform == "win32":
++            raise MagickError("ImageMagick 7 (magick.exe) was not found.")
+         convert, identify = shutil.which("convert"), shutil.which("identify")
+         if convert and identify:
+             return cls([convert], [identify], 6, cwebp)
+@@ -162,7 +171,7 @@
+             try:
+                 out = subprocess.run(
+                     self.convert_cmd + ["-list", "format"],
+-                    capture_output=True, text=True, timeout=30,
++                    capture_output=True, text=True, timeout=30, **POPEN_FLAGS,
+                 ).stdout
+             except (OSError, subprocess.SubprocessError):
+                 out = ""
+@@ -180,7 +189,7 @@
+                 try:
+                     out = subprocess.run(
+                         self.convert_cmd + ["rose:", "-quality", quality, "WEBP:-"],
+-                        capture_output=True, timeout=30,
++                        capture_output=True, timeout=30, **POPEN_FLAGS,
+                     ).stdout
+                 except (OSError, subprocess.SubprocessError):
+                     out = b""
+@@ -202,7 +211,7 @@
+         try:
+             proc = subprocess.run(
+                 self.identify_cmd + ["-ping", "-quiet", "-format", "%w %h %m\n", str(path)],
+-                capture_output=True, text=True, timeout=60,
++                capture_output=True, text=True, timeout=60, **POPEN_FLAGS,
+             )
+         except subprocess.TimeoutExpired:
+             raise MagickError("Timed out reading image")
+@@ -455,7 +464,7 @@
+ def _run(cmd: list[str], cancel_event: threading.Event | None) -> None:
+     try:
+         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+-                                stdin=subprocess.DEVNULL)
++                                stdin=subprocess.DEVNULL, **POPEN_FLAGS)
+     except OSError as exc:
+         raise MagickError(f"Could not run ImageMagick: {exc}")
+     # Read stderr in a thread so a chatty process can never block on a full pipe.
