@@ -100,7 +100,9 @@ in) before typing `magick-studio`. The app-menu launcher works right away.
 ./install.sh
 ```
 
-Packages installed when missing: `python3 python3-gobject gtk4 libadwaita ImageMagick`.
+Packages installed when missing:
+`python3 python3-gobject gtk4 libadwaita gobject-introspection ImageMagick` (plus
+`libglvnd-gles` on minimal installs that lack OpenGL ES).
 
 ### Ubuntu 24.04 or newer
 
@@ -123,7 +125,7 @@ Same packages as Ubuntu. Debian 12 is not supported (its Libadwaita is too old).
 
 ```bash
 # Fedora
-sudo dnf install python3-gobject gtk4 libadwaita ImageMagick
+sudo dnf install python3-gobject gtk4 libadwaita gobject-introspection ImageMagick
 # Debian / Ubuntu
 sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 imagemagick webp
 ```

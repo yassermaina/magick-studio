@@ -110,7 +110,12 @@ if [ "$SKIP_DEPS" -eq 0 ]; then
     case " $DISTRO_ID $DISTRO_LIKE " in
         *" fedora "*|*" rhel "*|*" centos "*)
             [ -n "$PYTHON" ] || missing+=(python3)
-            have_gtk    || missing+=(python3-gobject gtk4 libadwaita)
+            # gobject-introspection provides cairo-1.0.typelib, needed by GTK 4
+            # bindings but not always pulled in (e.g. minimal/container installs).
+            have_gtk    || missing+=(python3-gobject gtk4 libadwaita gobject-introspection)
+            # GTK 4 aborts at startup without an OpenGL ES library (missing on
+            # minimal/container installs; always present on Fedora desktops).
+            ldconfig -p 2>/dev/null | grep -q 'libGLESv2\.so\.2' || missing+=(libglvnd-gles)
             have_magick || missing+=(ImageMagick)
             if [ "$WITH_AVIF" -eq 1 ] && ! have_avif; then missing+=(ImageMagick-heic); fi
             [ "${#missing[@]}" -eq 0 ] || install_packages dnf "${missing[@]}"
