@@ -15,3 +15,7 @@ output/
 *.swp
 *~
 .DS_Store
+
+# Build output
+build/
+dist/

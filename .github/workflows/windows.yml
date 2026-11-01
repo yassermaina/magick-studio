@@ -1,0 +1,122 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Build, test and package (Windows x64)
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+      MAGICK_STUDIO_NO_DIALOGS: "1"
+      WORK: ${{ github.workspace }}\build\ci
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Runner information
+        run: |
+          Get-CimInstance Win32_OperatingSystem | Format-List Caption, Version, BuildNumber, OSArchitecture
+          python --version
+          Get-Command magick -ErrorAction SilentlyContinue | Format-List Source, Version
+
+      - name: Install Python dependencies
+        run: python -m pip install -r windows/requirements.txt
+
+      - name: Stage bundled ImageMagick
+        run: |
+          ./windows/build.ps1 -Steps imagemagick
+          # All tests below must use the bundled copy, not the runner's ImageMagick.
+          "MAGICK_STUDIO_MAGICK=$PWD\build\windows\imagemagick\magick.exe" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force $env:WORK | Out-Null
+
+      - name: Backend tests
+        run: python -m pytest tests -v -rs
+
+      - name: GUI tests (Qt on Windows)
+        run: |
+          $env:GUI_SCREENSHOT = "$env:WORK\gui-test.png"
+          python -m pytest windows/tests -v -rs
+
+      - name: Build application (PyInstaller)
+        run: ./windows/build.ps1 -Steps app
+
+      - name: Validate bundle
+        run: python windows/ci/winci.py bundle-check build/windows/dist/MagickStudio
+
+      - name: Create sample images
+        run: python windows/ci/winci.py samples "$env:WORK\samples"
+
+      - name: Packaged app converts real images
+        run: python windows/ci/winci.py smoke build/windows/dist/MagickStudio/MagickStudio.exe "$env:WORK\samples" $env:WORK
+
+      - name: Packaged app opens its window
+        run: python windows/ci/winci.py gui-check build/windows/dist/MagickStudio/MagickStudio.exe "$env:WORK\samples" "$env:WORK\packaged-gui.json"
+
+      - name: No console windows while processing
+        run: |
+          python windows/ci/winci.py console-check build/windows/dist/MagickStudio/MagickStudio.exe "$env:WORK\samples" $env:WORK
+          if ($LASTEXITCODE -eq 2) {
+            "::warning::Console window check was inconclusive on this runner"
+            exit 0
+          }
+          exit $LASTEXITCODE
+
+      - name: Screenshots
+        run: |
+          python windows/ci/winci.py screenshot build/windows/dist/MagickStudio/MagickStudio.exe "$env:WORK\samples" "$env:WORK\windows-light.png"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python windows/ci/winci.py screenshot build/windows/dist/MagickStudio/MagickStudio.exe "$env:WORK\samples" "$env:WORK\windows-dark.png" --dark
+
+      - name: Build installer (Inno Setup)
+        run: ./windows/build.ps1 -Steps installer
+
+      - name: Install, upgrade and uninstall
+        run: |
+          $setup = (Get-ChildItem build/windows/installer/MagickStudio-Setup-*-x64.exe).FullName
+          python windows/ci/winci.py install-test $setup $env:WORK
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-FileHash $setup -Algorithm SHA256 | Format-List Algorithm, Hash, Path
+
+      - name: Upload installer
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: MagickStudio-Setup-x64
+          path: build/windows/installer/*.exe
+          if-no-files-found: warn
+
+      - name: Upload portable build
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: MagickStudio-portable-x64
+          path: build/windows/dist/MagickStudio
+          if-no-files-found: warn
+
+      - name: Upload test reports and screenshots
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-test-reports
+          path: |
+            build/ci/*.json
+            build/ci/*.png
+            build/ci/*.log
+          if-no-files-found: warn

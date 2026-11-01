@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import image_processor as ip  # noqa: E402
 
 APP_ID = "io.github.magickstudio.MagickStudio"
-VERSION = "1.0.0"
+VERSION = ip.APP_VERSION
 THUMB_SIZE = 48
 PREVIEW_SIZE = 720
 

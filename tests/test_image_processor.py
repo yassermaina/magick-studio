@@ -44,7 +44,8 @@ def test_detect_finds_imagemagick():
 
 def test_detect_missing_imagemagick(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", str(tmp_path))
-    with pytest.raises(ip.MagickError, match="not installed"):
+    monkeypatch.delenv("MAGICK_STUDIO_MAGICK", raising=False)
+    with pytest.raises(ip.MagickError, match="not installed|not found"):
         ip.Magick.detect()
 
 
@@ -197,8 +198,14 @@ def test_filename_with_spaces(tmp_path):
     assert r.output.name == "my holiday photo.webp"
 
 
-@pytest.mark.parametrize("name", ["café ünïcødé 日本語.png", "-dash.png", "colon:name.png",
-                                  "brackets[0].png"])
+UNUSUAL_NAMES = ["café ünïcødé 日本語.png", "-dash.png", "brackets[0].png",
+                 # Characters that are special to cmd.exe / PowerShell
+                 "a & b %PATH% !x! ^c 'q' #1; (2), $v.png"]
+if sys.platform != "win32":
+    UNUSUAL_NAMES.append("colon:name.png")   # ':' is not allowed in Windows names
+
+
+@pytest.mark.parametrize("name", UNUSUAL_NAMES)
 def test_unusual_filenames(tmp_path, name):
     img = make_image(tmp_path / "src" / "x.png")
     target = img.with_name(name)
@@ -255,6 +262,7 @@ def test_missing_file(tmp_path):
     assert not r.ok and "not found" in r.error.lower()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
 def test_unwritable_output_dir(tmp_path):
     if os.geteuid() == 0:
         pytest.skip("root ignores permissions")
@@ -350,9 +358,10 @@ def test_resize_geometry():
 
 
 def test_command_never_uses_shell(tmp_path):
-    cmd = ip.build_command(MAGICK, Path("/x/a b.png"), "/o/t.tmp", ip.web_preset())
+    src, tmp = tmp_path / "a b.png", tmp_path / "t.tmp"
+    cmd = ip.build_command(MAGICK, src, str(tmp), ip.web_preset())
     assert isinstance(cmd, list)
-    assert "/x/a b.png" in cmd and cmd[-1] == "WEBP:/o/t.tmp"
+    assert str(src.resolve()) in cmd and cmd[-1] == f"WEBP:{tmp}"
 
 
 def test_parse_writable_formats():
@@ -412,3 +421,160 @@ def test_cwebp_fallback_invalid_image(tmp_path, cwebp_magick):
 def test_human_size():
     assert ip.human_size(512) == "512 B"
     assert ip.human_size(2048) == "2.0 KB"
+
+
+# --------------------------------------------------------------------------
+# Cross-platform / Windows regression tests
+
+
+def test_unicode_directories(tmp_path):
+    src = tmp_path / "Фото 写真 é"
+    img = make_image(src / "pic.png")
+    out = tmp_path / "résultats 出力"
+    r = ip.process_image(MAGICK, img, ip.Settings(output_format="webp", output_dir=str(out)))
+    assert r.ok, r.error
+    assert r.output == out / "pic.webp"
+    assert dims(r.output)[2] == "WEBP"
+
+
+def _capture_subprocess(monkeypatch):
+    calls = []
+    real_popen = subprocess.Popen
+
+    class Recorder(real_popen):
+        def __init__(self, *args, **kwargs):
+            calls.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", Recorder)
+    return calls
+
+
+def test_console_windows_suppressed(tmp_path, monkeypatch):
+    """Every ImageMagick call must use CREATE_NO_WINDOW on Windows."""
+    calls = _capture_subprocess(monkeypatch)
+    m = ip.Magick(MAGICK.convert_cmd, MAGICK.identify_cmd, MAGICK.version, MAGICK.cwebp)
+    img = make_image(tmp_path / "a.png")
+    calls.clear()
+    m.writable_formats()
+    m.webp_quality_works()
+    m.identify(img)
+    r = ip.process_image(m, img, settings(tmp_path, output_format="webp"))
+    ip.thumbnail(m, img, 64, str(tmp_path / "thumb.png"))
+    assert r.ok, r.error
+    assert len(calls) >= 5
+    for kwargs in calls:
+        if sys.platform == "win32":
+            assert kwargs.get("creationflags", 0) & subprocess.CREATE_NO_WINDOW
+        else:
+            assert "creationflags" not in kwargs
+
+
+def test_cancel_leaves_no_running_process(tmp_path, monkeypatch):
+    procs = []
+    real_popen = subprocess.Popen
+
+    class Recorder(real_popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            procs.append(self)
+
+    monkeypatch.setattr(subprocess, "Popen", Recorder)
+    img = make_image(tmp_path / "huge.png", "3000x3000", "xc:gray", extra=["+noise", "Random"])
+    ev = threading.Event()
+    threading.Timer(0.3, ev.set).start()
+    r = ip.process_image(MAGICK, img, settings(
+        tmp_path, output_format="webp", resize=True, width=4000, allow_upscale=True), ev)
+    assert r.error == "Cancelled"
+    assert procs and all(p.poll() is not None for p in procs)
+    assert list((tmp_path / "out").iterdir()) == []
+
+
+def _fake_exe(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("")
+    return str(path)
+
+
+def test_detect_prefers_bundled_imagemagick(tmp_path, monkeypatch):
+    name = "magick.exe" if sys.platform == "win32" else "magick"
+    bundled = _fake_exe(tmp_path / "bundle" / "imagemagick" / name)
+    monkeypatch.delenv("MAGICK_STUDIO_MAGICK", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    m = ip.Magick.detect()          # a system ImageMagick is also on PATH here
+    assert m.convert_cmd == [bundled] and m.version == 7
+
+
+def test_detect_env_override(tmp_path, monkeypatch):
+    exe = _fake_exe(tmp_path / "custom" / "magick")
+    monkeypatch.setenv("MAGICK_STUDIO_MAGICK", exe)
+    assert ip.Magick.detect().convert_cmd == [exe]
+    monkeypatch.setenv("MAGICK_STUDIO_MAGICK", str(tmp_path / "missing"))
+    with pytest.raises(ip.MagickError, match="missing file"):
+        ip.Magick.detect()
+
+
+def test_windows_never_uses_system_convert(tmp_path, monkeypatch):
+    """C:\\Windows\\System32\\convert.exe is a disk tool, not ImageMagick."""
+    monkeypatch.delenv("MAGICK_STUDIO_MAGICK", raising=False)
+    monkeypatch.setattr(ip.sys, "platform", "win32")
+    fake = {"convert": r"C:\Windows\System32\convert.exe", "identify": r"C:\x\identify.exe"}
+    monkeypatch.setattr(ip.shutil, "which", lambda name: fake.get(name))
+    with pytest.raises(ip.MagickError, match="magick.exe"):
+        ip.Magick.detect()
+
+
+def test_error_messages_hide_windows_paths():
+    clean = ip._clean_error
+    assert clean("magick.exe: unable to open image `C:\\Users\\Ann\\é.png': No such file "
+                 "@ error/blob.c/OpenBlob/3596.") == "unable to open image: No such file"
+    assert clean("magick.exe: bad `\\\\server\\share\\a.png' @ x") == "bad"
+    assert clean("magick: no decode delegate for this image format `JPG' @ x") == \
+        "no decode delegate for this image format `JPG'"
+
+
+def test_avif_when_supported(tmp_path):
+    if "avif" not in MAGICK.available_output_formats():
+        pytest.skip("this ImageMagick cannot write AVIF")
+    img = make_image(tmp_path / "t.png", "120x80", "xc:none", extra=[
+        "-fill", "red", "-draw", "circle 60,40 60,10"])
+    r = ip.process_image(MAGICK, img, settings(tmp_path, output_format="avif", quality=60))
+    assert r.ok, r.error
+    assert r.output.suffix == ".avif"
+    assert dims(r.output) == (120, 80, "AVIF")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows drive letters")
+def test_windows_drive_letter_paths(tmp_path):
+    img = make_image(tmp_path / "drive test.png")
+    assert img.drive                                   # e.g. "C:"
+    cmd = ip.build_command(MAGICK, img, str(tmp_path / "x.tmp"), ip.web_preset())
+    assert cmd[-1] == f"WEBP:{tmp_path / 'x.tmp'}"
+    r = ip.process_image(MAGICK, img, ip.web_preset())
+    assert r.ok, r.error
+    assert r.output == tmp_path / "output" / "drive test.webp"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows UNC paths")
+def test_windows_unc_paths(tmp_path):
+    drive = tmp_path.drive.rstrip(":")
+    unc_root = Path(rf"\\localhost\{drive}$") / tmp_path.relative_to(tmp_path.anchor)
+    if not unc_root.exists():
+        pytest.skip("administrative share not reachable")
+    make_image(tmp_path / "net.png")
+    out = unc_root / "unc out"
+    r = ip.process_image(MAGICK, unc_root / "net.png",
+                         ip.Settings(output_format="webp", output_dir=str(out)))
+    assert r.ok, r.error
+    assert (tmp_path / "unc out" / "net.webp").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows hidden attribute")
+def test_windows_hidden_folders_skipped(tmp_path):
+    import ctypes
+    make_image(tmp_path / "visible.png")
+    hidden = tmp_path / "Hidden Stuff"
+    make_image(hidden / "secret.png")
+    assert ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2)   # HIDDEN
+    assert [p.name for p in ip.scan_folder(tmp_path)] == ["visible.png"]

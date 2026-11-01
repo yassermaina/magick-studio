@@ -11,7 +11,9 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -36,9 +38,15 @@ _EXT_TO_FORMAT = {
     ".png": "png", ".webp": "webp", ".avif": "avif",
 }
 
+APP_VERSION = "1.1.0"
+
 DEFAULT_OUTPUT_DIRNAME = "output"
 DEFAULT_QUALITY = 82
 TEMP_PREFIX = ".magick-studio-"
+
+# On Windows, magick.exe is a console program: without this flag every call
+# from the windowed app would flash a console window.
+POPEN_FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
 
 
 def _umask() -> int:
@@ -144,9 +152,18 @@ class Magick:
     @classmethod
     def detect(cls) -> "Magick":
         cwebp = shutil.which("cwebp")
-        magick = shutil.which("magick")
+        override = os.environ.get("MAGICK_STUDIO_MAGICK")
+        if override and not os.path.isfile(override):
+            raise MagickError(f"MAGICK_STUDIO_MAGICK points to a missing file: {override}")
+        magick = override or _bundled_magick() or shutil.which("magick")
         if magick:
             return cls([magick], [magick, "identify"], 7, cwebp)
+        # Windows has an unrelated C:\Windows\System32\convert.exe (disk tool),
+        # and ImageMagick 6 is not supported there.
+        if sys.platform == "win32":
+            raise MagickError("ImageMagick 7 (magick.exe) was not found. "
+                              "Reinstall Magick Studio, or install ImageMagick 7 "
+                              "and add it to PATH.")
         convert, identify = shutil.which("convert"), shutil.which("identify")
         if convert and identify:
             return cls([convert], [identify], 6, cwebp)
@@ -162,7 +179,8 @@ class Magick:
             try:
                 out = subprocess.run(
                     self.convert_cmd + ["-list", "format"],
-                    capture_output=True, text=True, timeout=30,
+                    capture_output=True, encoding="utf-8", errors="replace",
+                    timeout=30, **POPEN_FLAGS,
                 ).stdout
             except (OSError, subprocess.SubprocessError):
                 out = ""
@@ -180,7 +198,7 @@ class Magick:
                 try:
                     out = subprocess.run(
                         self.convert_cmd + ["rose:", "-quality", quality, "WEBP:-"],
-                        capture_output=True, timeout=30,
+                        capture_output=True, timeout=30, **POPEN_FLAGS,
                     ).stdout
                 except (OSError, subprocess.SubprocessError):
                     out = b""
@@ -202,7 +220,8 @@ class Magick:
         try:
             proc = subprocess.run(
                 self.identify_cmd + ["-ping", "-quiet", "-format", "%w %h %m\n", str(path)],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, encoding="utf-8", errors="replace",
+                timeout=60, **POPEN_FLAGS,
             )
         except subprocess.TimeoutExpired:
             raise MagickError("Timed out reading image")
@@ -231,6 +250,15 @@ def parse_writable_formats(listing: str) -> set[str]:
     return formats
 
 
+def _bundled_magick() -> str | None:
+    """ImageMagick shipped inside a PyInstaller build (Windows installer)."""
+    if not getattr(sys, "frozen", False):
+        return None
+    base = Path(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
+    exe = base / "imagemagick" / ("magick.exe" if sys.platform == "win32" else "magick")
+    return str(exe) if exe.is_file() else None
+
+
 def is_supported(path: str | os.PathLike) -> bool:
     return Path(path).suffix.lower() in SUPPORTED_EXTENSIONS
 
@@ -248,14 +276,27 @@ def scan_folder(folder: str | os.PathLike, exclude: list[str | os.PathLike] = ()
     for root, dirs, files in os.walk(folder, onerror=lambda e: None):
         dirs[:] = sorted(
             d for d in dirs
-            if not d.startswith(".")
+            if not _is_hidden(root, d)
             and d != DEFAULT_OUTPUT_DIRNAME
             and os.path.realpath(os.path.join(root, d)) not in excluded
         )
         for name in sorted(files):
-            if not name.startswith(".") and is_supported(name):
+            if not _is_hidden(root, name) and is_supported(name):
                 found.append(Path(root) / name)
     return found
+
+
+def _is_hidden(root: str, name: str) -> bool:
+    """Dot-files everywhere, plus files marked hidden on Windows."""
+    if name.startswith("."):
+        return True
+    if sys.platform == "win32":
+        try:
+            attrs = os.stat(os.path.join(root, name)).st_file_attributes
+        except OSError:
+            return False
+        return bool(attrs & (stat.FILE_ATTRIBUTE_HIDDEN | stat.FILE_ATTRIBUTE_SYSTEM))
+    return False
 
 
 def resolve_output_format(source: Path, settings: Settings) -> str:
@@ -455,7 +496,7 @@ def process_image(
 def _run(cmd: list[str], cancel_event: threading.Event | None) -> None:
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                stdin=subprocess.DEVNULL)
+                                stdin=subprocess.DEVNULL, **POPEN_FLAGS)
     except OSError as exc:
         raise MagickError(f"Could not run ImageMagick: {exc}")
     # Read stderr in a thread so a chatty process can never block on a full pipe.
@@ -487,11 +528,11 @@ def _clean_error(stderr: str) -> str:
         if not line:
             continue
         # "magick: no decode delegate for this image format `JPG' @ error/..."
-        if line.startswith(("magick:", "convert:", "identify:")):
+        if line.startswith(("magick:", "magick.exe:", "convert:", "identify:")):
             line = line.split(":", 1)[1].strip()
         line = line.split(" @ ")[0]
         # Drop the quoted file path ImageMagick appends; the UI already shows it.
-        line = re.sub(r"\s*`/[^']*'", "", line)
+        line = re.sub(r"\s*`(?:/|[A-Za-z]:\\|\\\\)[^']*'", "", line)
         return line[:300]
     return ""
 
