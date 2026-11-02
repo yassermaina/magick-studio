@@ -131,6 +131,7 @@ def cmd_bundle_check(app_dir: str):
         "ImageMagick policy": internal / "imagemagick" / "policy.xml",
         "LGPL text": internal / "licenses" / "LGPL-3.0.txt",
         "Python license": internal / "licenses" / "Python-LICENSE.txt",
+        "Apache-2.0 text (OpenSSL)": internal / "licenses" / "Apache-2.0.txt",
         "app license": app / "LICENSE.txt",
         "third-party notices": app / "THIRD-PARTY-NOTICES.txt",
         "icon": internal / "assets" / "icon.ico",

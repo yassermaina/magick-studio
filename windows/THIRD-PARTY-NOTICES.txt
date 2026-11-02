@@ -7,9 +7,27 @@ The Windows edition bundles the following third-party software:
 ImageMagick 7.1.2-35 (portable, Q16-HDRI, x64)
   https://imagemagick.org — ImageMagick License
   Folder: _internal\imagemagick\ (magick.exe and its configuration files)
-  See _internal\imagemagick\LICENSE.txt and NOTICE.txt. NOTICE.txt also lists
-  the licenses of the image libraries built into magick.exe (libjpeg-turbo,
-  libpng, libwebp, libheif, aom, zlib, and others).
+  See _internal\imagemagick\LICENSE.txt and NOTICE.txt. magick.exe is
+  ImageMagick's unmodified official build. It has these libraries built in;
+  NOTICE.txt contains the license text of each one and the exact source
+  revision it was built from (https://github.com/ImageMagick/<name>/tree/...):
+    Permissive licenses (BSD, MIT, zlib, libpng, IJG, Apache-2.0 and similar):
+      aom, brotli, bzip2, fontconfig, freetype, harfbuzz, highway, imath,
+      lcms, libffi, libjpeg-turbo, libjxl, libpng, libraqm, libtiff, libwebp,
+      libxml2, libzip, openexr, openh264, openjpeg, openjph, pixman,
+      xz (liblzma), zlib, zstd
+    GNU LGPL (2.0, 2.1 or 3.0), statically linked:
+      cairo (LGPL-2.1 or MPL-1.1), libcroco, fribidi, gdk-pixbuf, glib,
+      liblqr, pango, libraw (LGPL-2.1 or CDDL-1.0), librsvg, libde265,
+      libheif
+  The complete corresponding source of ImageMagick and of every library above
+  is published by the ImageMagick project at the revisions listed in
+  NOTICE.txt; the Windows build scripts are at
+  https://github.com/ImageMagick/ImageMagick-Windows. You may rebuild
+  magick.exe from that source and replace _internal\imagemagick\magick.exe.
+  Ghostscript is not included. Magick Studio's ImageMagick policy
+  (_internal\imagemagick\policy.xml) disables the PostScript, PDF, SVG and
+  other vector or script formats.
 
 Qt 6 and Qt for Python (PySide6, Shiboken6) 6.12.0
   https://www.qt.io — https://pypi.org/project/PySide6/
@@ -26,3 +44,36 @@ Python
 PyInstaller bootloader
   https://pyinstaller.org — GPL-2.0 with a special exception that permits
   distributing the bootloader with applications under any license.
+
+OpenSSL 3 (libcrypto-3*.dll, libssl-3*.dll)
+  https://www.openssl.org — Apache License 2.0.
+  Included by Python and by Qt. See _internal\licenses\Apache-2.0.txt.
+
+Mesa llvmpipe software renderer (_internal\PySide6\opengl32sw.dll)
+  https://www.mesa3d.org — MIT License. Shipped with Qt as an OpenGL fallback.
+  Copyright (C) 1999-2007 Brian Paul. All Rights Reserved. Permission is hereby
+  granted, free of charge, to any person obtaining a copy of this software and
+  associated documentation files (the "Software"), to deal in the Software
+  without restriction, including without limitation the rights to use, copy,
+  modify, merge, publish, distribute, sublicense, and/or sell copies of the
+  Software, and to permit persons to whom the Software is furnished to do so,
+  subject to the following conditions: The above copyright notice and this
+  permission notice shall be included in all copies or substantial portions of
+  the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Third-party code inside Qt
+  Qt includes third-party components (for example FreeType, HarfBuzz, libpng,
+  libjpeg, libwebp, libtiff, PCRE2, zlib and double-conversion) under the
+  licenses listed at https://doc.qt.io/qt-6/licenses-used-in-qt.html.
+
+Libraries built into Python's own modules
+  bzip2 and libffi: see _internal\licenses\Python-LICENSE.txt.
+  xz/liblzma (0BSD, https://tukaani.org/xz/), expat (MIT,
+  https://libexpat.github.io) and mpdecimal (BSD-2-Clause,
+  https://www.bytereef.org/mpdecimal/) are included in _lzma.pyd,
+  pyexpat.pyd and _decimal.pyd under those licenses.
+
+Microsoft Visual C++ runtime (vcruntime140*.dll, msvcp140*.dll, vcomp140.dll,
+ucrtbase.dll, api-ms-win-*.dll)
+  Redistributed as permitted by the Microsoft Visual Studio license terms for
+  distributable code.
