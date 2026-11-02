@@ -203,3 +203,21 @@ def test_smoke_test_mode(images, tmp_path):
     assert len(data["results"]) == 3
     assert code == 1                                      # broken.jpg fails as expected
     assert sum(r["ok"] for r in data["results"]) == 2
+
+
+def test_oversized_and_disguised_files_flagged(win, tmp_path):
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    bomb = tmp_path / "bomb.png"
+    bomb.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 30000, 30000,
+                     8, 0, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\0" * 64)) + chunk(b"IEND", b""))
+    ps = tmp_path / "scan.jpg"
+    ps.write_bytes(b"%!PS\nshowpage\n")
+    load(win, [bomb, ps])
+    errors = {it.path.name: it.error for it in win.items}
+    assert "too large" in errors["bomb.png"]
+    assert "Not a supported image" in errors["scan.jpg"]
+    assert not win.start_button.isEnabled()

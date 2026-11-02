@@ -38,6 +38,8 @@ from PySide6.QtWidgets import (  # noqa: E402
 
 APP_NAME = "Magick Studio"
 APP_USER_MODEL_ID = "MagickStudio.MagickStudio"
+APP_MUTEX = "MagickStudio.Running"   # must match AppMutex in installer.iss
+_RUNNING_MUTEX = None
 THUMB_SIZE = 48
 PREVIEW_SIZE = 720
 FORMAT_LABELS = {"original": "Keep original", "jpeg": "JPEG", "png": "PNG",
@@ -60,6 +62,10 @@ def load_image(magick: ip.Magick, path: Path, size: int) -> QImage:
     """Scaled, auto-rotated image. Safe to call from worker threads."""
     reader = QImageReader(str(path))
     reader.setAutoTransform(True)
+    full = reader.size()
+    if full.isValid() and (full.width() > size or full.height() > size):
+        # Decode at reduced size (much faster and smaller for large JPEGs).
+        reader.setScaledSize(full.scaled(size, size, Qt.KeepAspectRatio))
     image = reader.read()
     if image.isNull():  # e.g. AVIF/HEIC: let ImageMagick render a PNG preview
         with tempfile.TemporaryDirectory(prefix="magick-studio-") as tmp:
@@ -153,6 +159,7 @@ class MainWindow(QMainWindow):
         self.magick = magick
         self.items: list[ImageItem] = []
         self.loader = ThreadPoolExecutor(max_workers=4)
+        self.preview_loader = ThreadPoolExecutor(max_workers=1)   # never queued behind thumbnails
         self.cancel_event: threading.Event | None = None
         self.output_dir: str | None = None
         self.preview_token = 0
@@ -577,12 +584,19 @@ class MainWindow(QMainWindow):
         self.update_state()
 
     def _load_item(self, item: ImageItem) -> None:
+        info, error, thumb = None, "", QImage()
         try:
-            info, error = self.magick.identify(item.path), ""
+            info = self.magick.identify(item.path)
+            ip.check_size(info)   # refuse decompression bombs before rendering a preview
+            thumb = load_image(self.magick, item.path, THUMB_SIZE * 2)
         except ip.MagickError as exc:
             info, error = None, f"Unsupported or damaged image ({exc})"
-        thumb = load_image(self.magick, item.path, THUMB_SIZE * 2) if info else QImage()
-        self.signals.loaded.emit(item, info, error, thumb)
+        except Exception as exc:  # never leave an item stuck at "Reading…"
+            info, error = None, f"Could not read image ({exc})"
+        try:
+            self.signals.loaded.emit(item, info, error, thumb)
+        except RuntimeError:      # window already closed
+            pass
 
     def _item_loaded(self, item: ImageItem, info, error: str, thumb: QImage) -> None:
         if item not in self.items:
@@ -635,7 +649,7 @@ class MainWindow(QMainWindow):
             self.preview.set_image(QImage())
             return
         token = self.preview_token
-        self.loader.submit(lambda: self.signals.preview.emit(
+        self.preview_loader.submit(lambda: self.signals.preview.emit(
             token, load_image(self.magick, item.path, PREVIEW_SIZE)))
 
     def _preview_loaded(self, token: int, image: QImage) -> None:
@@ -669,17 +683,25 @@ class MainWindow(QMainWindow):
 
     def _run_batch(self, jobs, settings, cancel_event) -> None:
         workers = max(1, min(4, (os.cpu_count() or 2) // 2))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(ip.process_image, self.magick, path, settings,
-                                   cancel_event): item for item, path in jobs}
-            for future in as_completed(futures):
-                item = futures[future]
-                try:
-                    result = future.result()
-                except Exception as exc:  # defensive: never lose the batch
-                    result = ip.ProcessResult(source=item.path, error=str(exc))
-                self.signals.item_done.emit(item, result)
-        self.signals.batch_done.emit(cancel_event.is_set())
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(ip.process_image, self.magick, path, settings,
+                                       cancel_event): item for item, path in jobs}
+                for future in as_completed(futures):
+                    item = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:  # defensive: never lose the batch
+                        result = ip.ProcessResult(source=item.path, error=str(exc))
+                    self.signals.item_done.emit(item, result)
+        except RuntimeError:          # window closed: Qt objects are gone
+            cancel_event.set()
+            return
+        finally:
+            try:                      # always leave the "busy" state
+                self.signals.batch_done.emit(cancel_event.is_set())
+            except RuntimeError:
+                pass
 
     def _item_done(self, item: ImageItem, result: ip.ProcessResult) -> None:
         item.result = result
@@ -756,6 +778,7 @@ class MainWindow(QMainWindow):
         if self.cancel_event:
             self.cancel_event.set()
         self.loader.shutdown(wait=False, cancel_futures=True)
+        self.preview_loader.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)
 
 
@@ -766,6 +789,10 @@ def create_app(argv: list[str]) -> QApplication:
         try:  # group taskbar buttons under our icon (matches the installer shortcut)
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+            # Lets the installer and uninstaller detect a running copy (AppMutex).
+            # The handle stays open until the process exits.
+            global _RUNNING_MUTEX
+            _RUNNING_MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, APP_MUTEX)
         except (AttributeError, OSError):
             pass
     app = QApplication.instance() or QApplication(argv)

@@ -48,16 +48,17 @@ function Step-ImageMagick {
     Copy-Item (Join-Path $full "magick.exe") $ImDir
     Copy-Item (Join-Path $full "*.xml") $ImDir
     Copy-Item (Join-Path $full "sRGB.icc"), (Join-Path $full "LICENSE.txt"), (Join-Path $full "NOTICE.txt") $ImDir
+    # Replace the portable build's open policy with a restrictive one.
+    Copy-Item (Join-Path $Root "windows\imagemagick-policy.xml") (Join-Path $ImDir "policy.xml") -Force
 
     # Verify at runtime which formats this build can write.
     $magick = Join-Path $ImDir "magick.exe"
     & $magick -version
     $formats = & $magick -list format
-    foreach ($f in "JPEG", "PNG", "WEBP") {
+    foreach ($f in "JPEG", "PNG", "WEBP", "AVIF") {
         if (-not ($formats -match "^\s*$f\*?\s+(\S+\s+)?rw")) { throw "Bundled ImageMagick cannot write $f" }
     }
-    $avif = [bool]($formats -match "^\s*AVIF\*?\s+(\S+\s+)?rw")
-    Write-Host "Bundled ImageMagick $ImVersion OK (JPEG, PNG, WEBP; AVIF=$avif)"
+    Write-Host "Bundled ImageMagick $ImVersion OK (JPEG, PNG, WEBP, AVIF)"
 }
 
 function Step-App {
@@ -93,7 +94,7 @@ VSVersionInfo(
 )
 "@ | Set-Content -Encoding UTF8 $versionFile
 
-    & python -m PyInstaller --noconfirm --clean --windowed --onedir `
+    & python -m PyInstaller --noconfirm --clean --windowed --onedir --noupx `
         --name MagickStudio `
         --icon (Join-Path $Root "assets\icon.ico") `
         --version-file $versionFile `

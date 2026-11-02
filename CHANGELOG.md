@@ -3,6 +3,52 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+Fixes from the v1.1.0 post-release audit
+([docs/audits/v1.1.0-post-release.md](docs/audits/v1.1.0-post-release.md)).
+
+### Security
+- Each input now gets an explicit ImageMagick decoder chosen from the file's signature.
+  Before, ImageMagick picked the decoder from the content, so a "photo.jpg" that was
+  really PostScript, PDF, SVG or MVG was passed to Ghostscript or a vector renderer
+  (on Linux) or to ImageMagick's SVG renderer, which can embed other local images.
+  Such files are now reported as "Not a supported image". Correctly encoded images
+  with the wrong extension still work.
+- Images over 200 megapixels are refused before decoding. A 380 KB crafted PNG used
+  to take more than 3 GB of memory per image.
+- Windows: the bundled ImageMagick now uses a restrictive `policy.xml`: no external
+  programs, no vector/document/script/network coders, and memory/disk/size limits.
+- CI: GitHub Actions are pinned to commit SHAs.
+
+### Fixed
+- Linux: *Quit* (Ctrl+Q) during processing hid the window but kept processing in the
+  background. It now cancels the batch.
+- Linux: a file name that is not valid UTF-8 stopped a folder import at "Scanning…".
+- Linux: Ctrl+Enter could start a partial batch while images were still loading.
+- Both: the preview no longer waits for all thumbnails to load. Qt thumbnails are
+  decoded at reduced size (much faster for large JPEGs).
+- Both: an unexpected error while reading an image no longer leaves it at "Reading…",
+  and the app always leaves the "processing" state.
+- Windows: no error traceback when the window is closed during processing.
+- Error messages from ImageMagick 7 now hide file paths (only IM6-style quotes were
+  handled before), including paths that contain apostrophes.
+- `MAGICK_STUDIO_MAGICK` must be an executable; a bare program name is looked up on PATH.
+- Windows installer: setup and uninstall ask you to close a running Magick Studio first;
+  requires Windows 10 1809 or later (Qt 6); never deletes an `_internal` folder that
+  doesn't belong to Magick Studio; the build disables UPX.
+- Windows: corrected license paths in `THIRD-PARTY-NOTICES.txt`; README wording on
+  Windows on ARM and upgrades.
+
+### Tests
+- New regression tests for disguised non-image files, misnamed images, signature
+  detection, empty/truncated files, decompression bombs, real ImageMagick error paths,
+  the Linux quit and non-UTF-8 bugs, and the Qt oversized/disguised file handling.
+- Linux CI fails instead of silently skipping the GUI and `cwebp` tests.
+- Windows CI checks the bundled policy, AVIF under that policy, the dark-mode
+  screenshot, the uninstaller's exit code, and that uninstalling is refused while the
+  app is running.
+
 ## [1.1.0] — 2026-11-01
 
 Adds a Windows edition. The Linux edition keeps working as before.

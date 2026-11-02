@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -151,10 +152,30 @@ def cmd_bundle_check(app_dir: str):
     formats = ip.parse_writable_formats(subprocess.run(
         [magick, "-list", "format"], capture_output=True, encoding="utf-8",
         errors="replace", env=clean_env(), **ip.POPEN_FLAGS).stdout)
-    for f in ("JPEG", "PNG", "WEBP"):
+    for f in ("JPEG", "PNG", "WEBP", "AVIF"):
         if f not in formats:
             fail(f"bundled ImageMagick cannot write {f}")
-    ok(f"bundled ImageMagick writes JPEG/PNG/WEBP; AVIF={'AVIF' in formats}")
+    ok("bundled ImageMagick writes JPEG/PNG/WEBP/AVIF")
+
+    # The restrictive policy must be the one in effect.
+    run = dict(capture_output=True, encoding="utf-8", errors="replace", env=clean_env(),
+               **ip.POPEN_FLAGS)
+    policy = subprocess.run([magick, "-list", "policy"], **run).stdout
+    if "list-length" not in policy or "MSVG" not in policy:
+        fail(f"Magick Studio policy is not active:\n{policy}")
+    with tempfile.TemporaryDirectory() as tmp:
+        svg = Path(tmp, "x.svg")
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>')
+        for coder in ("MSVG", "SVG", "MVG", "PS", "PDF", "TEXT"):
+            r = subprocess.run([magick, f"{coder}:{svg}", f"PNG:{tmp}\\o.png"], **run)
+            if r.returncode == 0 or "not authorized" not in r.stderr:
+                fail(f"{coder} is not blocked by the bundled policy: {r.stderr.strip()}")
+        avif = Path(tmp, "a.avif")
+        r = subprocess.run([magick, "-size", "64x64", "gradient:", f"AVIF:{avif}"], **run)
+        r2 = subprocess.run([magick, f"AVIF:{avif}", f"PNG:{tmp}\\a.png"], **run)
+        if r.returncode or r2.returncode:
+            fail(f"AVIF round trip failed under the policy: {r.stderr}{r2.stderr}")
+    ok("restrictive policy active: vector/document/script coders blocked; AVIF still works")
 
 
 def run_smoke(app_exe: str, samples: str, work: Path, out: Path | None = None) -> dict:
@@ -280,14 +301,20 @@ def cmd_screenshot(app_exe: str, samples: str, out_png: str, dark: bool = False)
         rect = wintypes.RECT()                           # visible frame, without the
         ctypes.windll.dwmapi.DwmGetWindowAttribute(       # invisible resize borders
             hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect))   # DWMWA_EXTENDED_FRAME_BOUNDS
+        from PySide6.QtCore import Qt
         from PySide6.QtGui import QGuiApplication
         app = QGuiApplication.instance() or QGuiApplication([])
         shot = app.primaryScreen().grabWindow(0, rect.left, rect.top,
                                               rect.right - rect.left, rect.bottom - rect.top)
         if shot.isNull() or not shot.save(out_png):
             fail("could not capture the window")
+        # Average lightness of the whole window proves the theme really applied.
+        lightness = shot.toImage().scaled(1, 1, Qt.IgnoreAspectRatio,
+                                          Qt.SmoothTransformation).pixelColor(0, 0).lightness()
+        if (lightness > 110) if dark else (lightness < 150):
+            fail(f"window lightness {lightness} does not match the {'dark' if dark else 'light'} theme")
         ok(f"saved {out_png} ({shot.width()}x{shot.height()}, screen {sw}x{sh}, "
-           f"{'dark' if dark else 'light'})")
+           f"{'dark' if dark else 'light'}, lightness {lightness})")
         user32.PostMessageW(hwnd, 0x0010, 0, 0)          # WM_CLOSE
         proc.wait(timeout=30)
         ok(f"app closed cleanly (exit code {proc.returncode})")
@@ -371,8 +398,24 @@ def cmd_install_test(setup_exe: str, work_dir: str):
     ok("re-install over existing version succeeded and removed stale files")
 
     uninstaller = install_dir / "unins000.exe"
-    subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-                   timeout=300)
+    uninstall = [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
+
+    # While the app runs, the uninstaller must refuse (AppMutex) and leave it intact.
+    running = subprocess.Popen([str(exe)], env=clean_env())
+    try:
+        wait_for_window(running.pid)
+        refused = subprocess.run(uninstall, timeout=300).returncode
+        time.sleep(10)
+        if not exe.is_file() or not shortcut.is_file():
+            fail("uninstaller removed files while the app was running")
+        ok(f"uninstall refused while the app was running (exit code {refused})")
+    finally:
+        running.kill()
+        running.wait(timeout=30)
+
+    code = subprocess.run(uninstall, timeout=300).returncode
+    if code != 0:
+        fail(f"uninstaller exit code {code}")
     end = time.monotonic() + 120             # the uninstaller relaunches itself from %TEMP%
     while (install_dir.exists() or shortcut.exists()) and time.monotonic() < end:
         time.sleep(1)

@@ -34,6 +34,11 @@ FORMAT_LABELS = {
 }
 
 
+def display(text: str | Path) -> str:
+    """Text safe for GTK widgets, even for file names that are not valid UTF-8."""
+    return str(text).encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def load_texture(magick: ip.Magick, path: Path, size: int) -> Gdk.Texture | None:
     """Load a scaled, correctly oriented texture. Safe to call from a worker thread."""
     pixbuf = None
@@ -64,11 +69,11 @@ class ImageItem:
         self.error = ""
         self.result: ip.ProcessResult | None = None
 
-        self.row = Adw.ActionRow(title=GLib.markup_escape_text(path.name),
+        self.row = Adw.ActionRow(title=GLib.markup_escape_text(display(path.name)),
                                  subtitle="Reading…")
         self.row.set_title_lines(1)
         self.row.set_subtitle_lines(2)
-        self.row.set_tooltip_text(str(path))
+        self.row.set_tooltip_text(display(path))
         self.row.item = self
 
         self.thumb = Gtk.Image(pixel_size=THUMB_SIZE, icon_name="image-x-generic-symbolic",
@@ -97,7 +102,7 @@ class ImageItem:
         if r is not None and r.ok:
             change = r.saved_percent
             word = "smaller" if change >= 0 else "larger"
-            text += (f"\n→ {r.output.name}  ·  {ip.human_size(r.output_size)}  "
+            text += (f"\n→ {display(r.output.name)}  ·  {ip.human_size(r.output_size)}  "
                      f"({abs(change):.0f}% {word})")
         elif r is not None:
             text += f"\nFailed: {r.error}"
@@ -111,7 +116,7 @@ class ImageItem:
         elif r is not None:
             self.status.set_from_icon_name("object-select-symbolic")
             self.status.set_css_classes(["success"])
-            self.status.set_tooltip_text(str(r.output))
+            self.status.set_tooltip_text(display(r.output))
             self.status.set_visible(True)
         else:
             self.status.set_visible(False)
@@ -126,6 +131,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.magick = magick
         self.items: list[ImageItem] = []
         self.loader = ThreadPoolExecutor(max_workers=4)
+        self.preview_loader = ThreadPoolExecutor(max_workers=1)   # never queued behind thumbnails
         self.cancel_event: threading.Event | None = None
         self.output_dir: str | None = None
         self.preview_token = 0
@@ -539,12 +545,16 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _load_item(self, item: ImageItem) -> None:
+        texture = None
         try:
             info = self.magick.identify(item.path)
+            ip.check_size(info)   # refuse decompression bombs before rendering a preview
             error = ""
+            texture = load_texture(self.magick, item.path, THUMB_SIZE * 2)
         except ip.MagickError as exc:
             info, error = None, f"Unsupported or damaged image ({exc})"
-        texture = load_texture(self.magick, item.path, THUMB_SIZE * 2) if info else None
+        except Exception as exc:  # never leave an item stuck at "Reading…"
+            info, error = None, f"Could not read image ({exc})"
         GLib.idle_add(self._item_loaded, item, info, error, texture)
 
     def _item_loaded(self, item: ImageItem, info, error: str, texture) -> bool:
@@ -585,7 +595,7 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         item: ImageItem = row.item
-        self.preview_label.set_label(f"{item.path.name}\n{item.describe()}")
+        self.preview_label.set_label(f"{display(item.path.name)}\n{item.describe()}")
         if not item.info:
             self.preview.set_paintable(None)
             return
@@ -595,7 +605,7 @@ class MainWindow(Adw.ApplicationWindow):
             texture = load_texture(self.magick, item.path, PREVIEW_SIZE)
             GLib.idle_add(self._preview_loaded, token, texture)
 
-        self.loader.submit(load)
+        self.preview_loader.submit(load)
 
     def _preview_loaded(self, token: int, texture) -> bool:
         if token == self.preview_token:
@@ -606,7 +616,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def start_processing(self) -> None:
         items = [it for it in self.items if it.info]
-        if not items or self.busy:
+        # Ctrl+Enter works even while the button is insensitive (images still loading).
+        if not items or self.busy or not self.start_button.get_sensitive():
             return
         settings = self.collect_settings()
         try:
@@ -628,17 +639,19 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _run_batch(self, items, settings, cancel_event) -> None:
         workers = max(1, min(4, (os.cpu_count() or 2) // 2))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(ip.process_image, self.magick, it.path, settings,
-                                   cancel_event): it for it in items}
-            for future in as_completed(futures):
-                item = futures[future]
-                try:
-                    result = future.result()
-                except Exception as exc:  # defensive: never kill the batch
-                    result = ip.ProcessResult(source=item.path, error=str(exc))
-                GLib.idle_add(self._item_done, item, result, len(items))
-        GLib.idle_add(self._batch_done, items, cancel_event.is_set())
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(ip.process_image, self.magick, it.path, settings,
+                                       cancel_event): it for it in items}
+                for future in as_completed(futures):
+                    item = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:  # defensive: never kill the batch
+                        result = ip.ProcessResult(source=item.path, error=str(exc))
+                    GLib.idle_add(self._item_done, item, result, len(items))
+        finally:  # always leave the "busy" state
+            GLib.idle_add(self._batch_done, items, cancel_event.is_set())
 
     def _item_done(self, item: ImageItem, result: ip.ProcessResult, total: int) -> bool:
         item.result = result
@@ -668,7 +681,7 @@ class MainWindow(Adw.ApplicationWindow):
         if failed:
             lines.append("")
             for r in failed[:5]:
-                lines.append(f"• {r.source.name}: {r.error}")
+                lines.append(f"• {display(r.source.name)}: {r.error}")
             if len(failed) > 5:
                 lines.append(f"• … and {len(failed) - 5} more")
         self.status_label.set_label(lines[0])
@@ -701,6 +714,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self.cancel_event:
             self.cancel_event.set()
         self.loader.shutdown(wait=False, cancel_futures=True)
+        self.preview_loader.shutdown(wait=False, cancel_futures=True)
         return False
 
 
@@ -713,7 +727,7 @@ class MagickStudio(Adw.Application):
 
         for name, callback, accels in (
             ("about", self.on_about, []),
-            ("quit", lambda *_: self.quit(), ["<primary>q"]),
+            ("quit", lambda *_: self.on_quit(), ["<primary>q"]),
             ("add-images", lambda *_: self.window and self.window.choose_files(), ["<primary>o"]),
             ("add-folder", lambda *_: self.window and self.window.choose_folder(),
              ["<primary><shift>o"]),
@@ -746,6 +760,13 @@ class MagickStudio(Adw.Application):
     def do_open(self, files, _n_files, _hint):
         self.pending_paths = [f.get_path() for f in files if f.get_path()]
         self.activate()
+
+    def on_quit(self) -> None:
+        # Close the window first so a running batch is cancelled (close-request);
+        # Application.quit() alone would leave it running in the background.
+        if self.window is not None:
+            self.window.close()
+        self.quit()
 
     def on_about(self, *_args):
         about = Adw.AboutDialog(

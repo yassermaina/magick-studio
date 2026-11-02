@@ -209,7 +209,7 @@ or overwritten.
 
 ### Requirements
 
-- Windows 10 or 11, **64-bit (x64)**
+- Windows 10 version 1809 or later, or Windows 11, **64-bit (x64)**
 - About 150 MB of disk space
 - Nothing else. ImageMagick and Python are included.
 
@@ -228,7 +228,8 @@ or overwritten.
 6. Click **Install**, then **Finish** to start Magick Studio.
 7. Later, open **Magick Studio** from the Start menu.
 
-To **update**, run the newer installer. It replaces the old version in place.
+To **update**, run the newer installer. It replaces the old version in place. 1.1.0 is the first
+Windows release, so only re-installing the same version has been tested so far.
 
 ### Using Magick Studio on Windows
 
@@ -281,8 +282,8 @@ Magick Studio, and if needed allow
 `%LOCALAPPDATA%\Programs\Magick Studio\_internal\imagemagick\magick.exe` in your
 antivirus.
 
-**Windows: the app doesn't start on Windows on ARM.** Only x64 builds are provided, and
-they have not been tested on ARM64 devices.
+**Windows: the installer refuses to run on Windows on ARM.** Only an x64 build is
+provided, and the installer only allows x64 Windows. ARM64 devices are not supported.
 
 **Linux: "ImageMagick not found".** Install ImageMagick (`sudo dnf install ImageMagick`
 or `sudo apt install imagemagick`), or rerun `./install.sh`.
@@ -313,6 +314,11 @@ format.
   Ubuntu 24.04 and Debian 13, but not on Fedora 44 without `ImageMagick-heic`.
   `--with-avif` installs that package; AVIF encoding through it was not verified.
 - **Animated GIF/WebP:** only the first frame is processed.
+- **Very large images:** images over 200 megapixels are refused, to protect against
+  crafted files that would use many gigabytes of memory.
+- **File contents are checked:** files are accepted only if their content is one of the
+  supported image formats, whatever their name. PostScript, PDF and SVG files renamed
+  to `.jpg` (for example) are refused.
 - **Small inputs can grow:** converting small or already optimized images can make
   them slightly *larger*. The app reports this as "% larger".
 - **Debian 12:** not supported, because its Libadwaita (1.2) is older than 1.5 (verified).
@@ -322,8 +328,8 @@ format.
 - **Windows versions:** automated tests run on Windows Server 2025 x64 (Windows 11 24H2
   codebase). The app has **not** been tested on Windows 10 or on a Windows 11 desktop PC.
   It is expected to work on both (x64), but this is not verified yet.
-- **Windows on ARM:** not supported. Only an x64 build is provided, and it has not been
-  tested under ARM64 emulation.
+- **Windows on ARM:** not supported. Only an x64 build is provided, and the installer
+  refuses to run on ARM64 Windows.
 - **Windows drag and drop:** implemented, but only covered by the automated tests through
   the same code path that *Add Images* uses, not by simulating a real mouse drag.
 - **Windows long paths:** paths longer than 260 characters have not been tested.

@@ -28,7 +28,8 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
-MinVersion=10.0
+; Qt 6 needs Windows 10 version 1809 (build 17763) or later.
+MinVersion=10.0.17763
 OutputDir={#OutputDir}
 OutputBaseFilename=MagickStudio-Setup-{#AppVersion}-x64
 SetupIconFile=..\assets\icon.ico
@@ -39,6 +40,8 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
+; Created by the running app: setup and uninstall ask the user to close it first.
+AppMutex=MagickStudio.Running
 RestartApplications=no
 
 [Languages]
@@ -49,7 +52,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [InstallDelete]
 ; Clean upgrades: remove files from the previous version before copying new ones.
-Type: filesandordirs; Name: "{app}\_internal"
+; Only when the folder holds Magick Studio, never another app's "_internal".
+Type: filesandordirs; Name: "{app}\_internal"; Check: IsMagickStudioFolder
 
 [UninstallDelete]
 ; Only the application's own folder; user images are never stored here.
@@ -64,3 +68,9 @@ Name: "{autodesktop}\Magick Studio"; Filename: "{app}\MagickStudio.exe"; AppUser
 
 [Run]
 Filename: "{app}\MagickStudio.exe"; Description: "{cm:LaunchProgram,Magick Studio}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function IsMagickStudioFolder: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{app}\MagickStudio.exe'));
+end;
