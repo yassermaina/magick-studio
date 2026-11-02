@@ -228,7 +228,7 @@ class Magick:
         path = Path(path).absolute()
         if not path.is_file():
             raise MagickError("File not found")
-        source = _input(path)
+        source = _input(path, self.version)
         try:
             proc = subprocess.run(
                 self.identify_cmd + ["-ping", "-quiet", "-format", "%w %h %m\n", source],
@@ -298,18 +298,22 @@ def sniff_coder(path: str | os.PathLike) -> str | None:
     return None
 
 
-def _input(path: Path) -> str:
+def _input(path: Path, version: int) -> str:
     """Absolute input path with an explicit decoder, e.g. "PNG:/photos/a.png[0]".
 
     "[0]" reads only the first frame of animated or multi-page files, so
     hundreds of frames cannot get past the MAX_PIXELS check. With "[0]",
-    ImageMagick expands "%d" and the like in the name, so "%" is escaped.
+    ImageMagick 7 expands "%d" and the like in the name, so "%" is escaped
+    there (ImageMagick 6 reads the name literally).
     """
     coder = sniff_coder(path)
     if coder is None:
         raise MagickError("Not a supported image (JPEG, PNG, WebP, AVIF, GIF, BMP, "
                           "TIFF, HEIC or JPEG XL)")
-    return f"{coder}:{str(path.absolute()).replace('%', '%%')}[0]"
+    name = str(path.absolute())
+    if version >= 7:
+        name = name.replace("%", "%%")
+    return f"{coder}:{name}[0]"
 
 
 def check_size(info: ImageInfo) -> None:
@@ -403,7 +407,7 @@ def build_command(magick: Magick, source: Path, dest: str, settings: Settings,
     """
     fmt = "png" if intermediate else resolve_output_format(source, settings)
     args = list(magick.convert_cmd)
-    args += [_input(source)]      # first frame of animated/multi-page files
+    args += [_input(source, magick.version)]      # first frame of animated/multi-page files
     args += ["-auto-orient"]      # fix orientation before metadata is removed
     geometry = resize_geometry(settings)
     if geometry:
@@ -612,7 +616,7 @@ def thumbnail(magick: Magick, source: str | os.PathLike, size: int, dest: str) -
     source = Path(source).absolute()
     check_size(magick.identify(source))
     cmd = magick.convert_cmd + [
-        _input(source), "-auto-orient",
+        _input(source, magick.version), "-auto-orient",
         "-thumbnail", f"{size}x{size}>", f"PNG:{dest}",
     ]
     _run(cmd, None)
