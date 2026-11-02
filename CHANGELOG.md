@@ -3,10 +3,12 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.1.1] — 2026-11-02
 
-Fixes from the v1.1.0 post-release audit
-([docs/audits/v1.1.0-post-release.md](docs/audits/v1.1.0-post-release.md)).
+Security and reliability update for Linux and Windows, from the v1.1.0 post-release
+audit ([docs/audits/v1.1.0-post-release.md](docs/audits/v1.1.0-post-release.md)).
+No new features. Upgrading is recommended, especially if you process images from
+untrusted sources.
 
 ### Security
 - Each input now gets an explicit ImageMagick decoder chosen from the file's signature.
@@ -17,9 +19,13 @@ Fixes from the v1.1.0 post-release audit
   with the wrong extension still work.
 - Images over 200 megapixels are refused before decoding. A 380 KB crafted PNG used
   to take more than 3 GB of memory per image.
+- Only the first frame of animated or multi-page files is decoded. Before, every frame
+  was decoded although only the first one was used and checked against the size limit,
+  so a small file with many large frames could take many gigabytes of memory.
 - Windows: the bundled ImageMagick now uses a restrictive `policy.xml`: no external
   programs, no vector/document/script/network coders, and memory/disk/size limits.
-- CI: GitHub Actions are pinned to commit SHAs.
+- Build: GitHub Actions are pinned to commit SHAs, and every Python package used to
+  build the Windows app (including indirect dependencies) is pinned with its SHA-256.
 
 ### Fixed
 - Linux: *Quit* (Ctrl+Q) during processing hid the window but kept processing in the
@@ -37,8 +43,10 @@ Fixes from the v1.1.0 post-release audit
 - Windows installer: setup and uninstall ask you to close a running Magick Studio first;
   requires Windows 10 1809 or later (Qt 6); never deletes an `_internal` folder that
   doesn't belong to Magick Studio; the build disables UPX.
-- Windows: corrected license paths in `THIRD-PARTY-NOTICES.txt`; README wording on
-  Windows on ARM and upgrades.
+- Windows: `THIRD-PARTY-NOTICES.txt` now lists the libraries built into `magick.exe`
+  with their licenses and source, plus OpenSSL (the Apache-2.0 text is now included),
+  Mesa llvmpipe, the MSVC runtime and Python's bundled libraries; license paths
+  corrected. README wording on Windows on ARM and upgrades corrected.
 
 ### Tests
 - New regression tests for disguised non-image files, misnamed images, signature
@@ -48,6 +56,12 @@ Fixes from the v1.1.0 post-release audit
 - Windows CI checks the bundled policy, AVIF under that policy, the dark-mode
   screenshot, the uninstaller's exit code, and that uninstalling is refused while the
   app is running.
+- Windows CI upgrades from the published v1.1.0 installer (checksum verified): the
+  version changes, the upgraded app starts and converts JPEG, PNG, WebP and AVIF,
+  originals are unchanged, there is one shortcut and one uninstall entry, and uninstall
+  removes the app but keeps user images.
+- Disguised-file tests check that ImageMagick is never started; a test checks that a
+  many-frame GIF is decoded with bounded memory.
 
 ## [1.1.0] — 2026-11-01
 

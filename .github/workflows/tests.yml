@@ -15,12 +15,24 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0   # tags, for the upgrade test
 
       - name: Check shell scripts
         run: bash -n install.sh && bash -n uninstall.sh
 
-      - name: Install with install.sh
-        run: ./install.sh --yes
+      - name: Install the previous release (v1.1.0)
+        run: |
+          mkdir "$RUNNER_TEMP/previous"
+          git archive v1.1.0 | tar -x -C "$RUNNER_TEMP/previous"
+          "$RUNNER_TEMP/previous/install.sh" --yes
+          grep -x 'APP_VERSION = "1.1.0"' ~/.local/share/magick-studio/image_processor.py
+
+      - name: Upgrade with install.sh
+        run: |
+          ./install.sh --yes
+          cmp main.py ~/.local/share/magick-studio/main.py
+          cmp image_processor.py ~/.local/share/magick-studio/image_processor.py
 
       - name: Install test tools
         run: sudo apt-get install -y python3-pytest xvfb desktop-file-utils
