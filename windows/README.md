@@ -11,7 +11,7 @@ windows/
   build.ps1               build script: ImageMagick → app → installer
   installer.iss           Inno Setup script (per-user installer)
   ci/winci.py             checks for the packaged app and installer, used by CI
-  requirements.txt        pinned Python build/test dependencies
+  requirements.txt        Python build/test dependencies, pinned with SHA-256 hashes
   licenses/               LGPL/GPL (Qt) and Apache-2.0 (OpenSSL) texts shipped with the app
   THIRD-PARTY-NOTICES.txt third-party notices shipped with the app
 ```
