@@ -113,7 +113,6 @@ def test_quit_cancels_running_batch(tmp_path):
     app = main.MagickStudio()
     win = main.MainWindow(app, ip.Magick.detect(), "")
     app.window = win
-    win.present()
     try:
         for i in range(6):
             subprocess.run(win.magick.convert_cmd + ["-size", "2500x2500", "xc:gray",
@@ -126,7 +125,7 @@ def test_quit_cancels_running_batch(tmp_path):
         win.start_processing()
         event = win.cancel_event
         assert event is not None
-        app.on_quit()
+        app.lookup_action("quit").activate(None)   # the Ctrl+Q action
         assert event.is_set()
         assert pump(lambda: not win.busy, timeout=60)
         produced = [it for it in win.items if it.result and it.result.ok]

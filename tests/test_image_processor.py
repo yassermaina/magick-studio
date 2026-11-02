@@ -417,7 +417,8 @@ def test_cwebp_fallback_invalid_image(tmp_path, cwebp_magick):
     bad.write_text("nope")
     r = ip.process_image(cwebp_magick, bad, settings(tmp_path, output_format="webp"))
     assert not r.ok
-    assert list((tmp_path / "out").iterdir()) == []
+    out = tmp_path / "out"      # refused before the output folder is even created
+    assert not out.exists() or list(out.iterdir()) == []
 
 
 def test_human_size():

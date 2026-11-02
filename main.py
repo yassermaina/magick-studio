@@ -762,10 +762,10 @@ class MagickStudio(Adw.Application):
         self.activate()
 
     def on_quit(self) -> None:
-        # Close the window first so a running batch is cancelled (close-request);
-        # Application.quit() alone would leave it running in the background.
+        # Cancel a running batch like closing the window does; Application.quit()
+        # alone would leave it running in the background.
         if self.window is not None:
-            self.window.close()
+            self.window.on_close_request()
         self.quit()
 
     def on_about(self, *_args):
