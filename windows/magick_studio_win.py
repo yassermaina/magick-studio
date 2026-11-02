@@ -58,9 +58,17 @@ def secondary(label: QLabel) -> QLabel:
     return label
 
 
+QT_FORMATS = {"JPEG": b"jpeg", "PNG": b"png", "GIF": b"gif", "WEBP": b"webp",
+              "TIFF": b"tiff", "BMP": b"bmp"}
+
+
 def load_image(magick: ip.Magick, path: Path, size: int) -> QImage:
     """Scaled, auto-rotated image. Safe to call from worker threads."""
-    reader = QImageReader(str(path))
+    # Use the decoder matching the file's signature, never Qt's own content
+    # detection (which could pick the SVG plugin). Others go to ImageMagick.
+    fmt = QT_FORMATS.get(ip.sniff_coder(path) or "", b"")
+    reader = QImageReader(str(path), fmt)
+    reader.setAutoDetectImageFormat(False)
     reader.setAutoTransform(True)
     full = reader.size()
     if full.isValid() and (full.width() > size or full.height() > size):

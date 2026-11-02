@@ -497,7 +497,8 @@ def cmd_upgrade_test(setup_exe: str, work_dir: str):
     # 1-2. Published installer, verified against the pinned and published checksums.
     old_setup = work / "previous" / PREVIOUS_SETUP
     old_setup.parent.mkdir(exist_ok=True)
-    urllib.request.urlretrieve(PREVIOUS_RELEASE + PREVIOUS_SETUP, old_setup)
+    with urllib.request.urlopen(PREVIOUS_RELEASE + PREVIOUS_SETUP, timeout=300) as r:
+        old_setup.write_bytes(r.read())
     sums = urllib.request.urlopen(PREVIOUS_RELEASE + "SHA256SUMS.txt", timeout=60).read().decode()
     actual = hashlib.sha256(old_setup.read_bytes()).hexdigest()
     if actual != PREVIOUS_SHA256:
