@@ -243,10 +243,16 @@ class Magick:
         if proc.returncode != 0 or not lines:
             raise MagickError(_clean_error(proc.stderr) or "Not a valid image")
         try:
-            w, h, fmt = lines[0].split(maxsplit=2)
-            return ImageInfo(path, int(w), int(h), fmt, path.stat().st_size)
+            frames = [line.split(maxsplit=2) for line in lines]
+            total = sum(int(w) * int(h) for w, h, _ in frames)
+            w, h, fmt = frames[0]
+            info = ImageInfo(path, int(w), int(h), fmt, path.stat().st_size)
         except (ValueError, OSError) as exc:
             raise MagickError(f"Could not read image information: {exc}")
+        if total > MAX_PIXELS:   # only when all frames are read (see _input)
+            raise MagickError(f"Image is too large ({len(frames)} frames; "
+                              f"the limit is {MAX_PIXELS // 1_000_000} megapixels)")
+        return info
 
 
 def parse_writable_formats(listing: str) -> set[str]:
@@ -303,17 +309,19 @@ def _input(path: Path, version: int) -> str:
 
     "[0]" reads only the first frame of animated or multi-page files, so
     hundreds of frames cannot get past the MAX_PIXELS check. With "[0]",
-    ImageMagick 7 expands "%d" and the like in the name, so "%" is escaped
-    there (ImageMagick 6 reads the name literally).
+    ImageMagick expands "%d" and the like in the name. ImageMagick 7 accepts
+    "%%" for a literal "%"; ImageMagick 6 does not, so there a name with "%"
+    is passed without "[0]" (all frames are read; identify() then limits the
+    total size and build_command() drops the extra frames).
     """
     coder = sniff_coder(path)
     if coder is None:
         raise MagickError("Not a supported image (JPEG, PNG, WebP, AVIF, GIF, BMP, "
                           "TIFF, HEIC or JPEG XL)")
     name = str(path.absolute())
-    if version >= 7:
-        name = name.replace("%", "%%")
-    return f"{coder}:{name}[0]"
+    if version < 7 and "%" in name:
+        return f"{coder}:{name}"
+    return f"{coder}:{name.replace('%', '%%')}[0]"
 
 
 def check_size(info: ImageInfo) -> None:
@@ -408,6 +416,7 @@ def build_command(magick: Magick, source: Path, dest: str, settings: Settings,
     fmt = "png" if intermediate else resolve_output_format(source, settings)
     args = list(magick.convert_cmd)
     args += [_input(source, magick.version)]      # first frame of animated/multi-page files
+    args += ["-delete", "1--1"]   # no-op unless all frames had to be read (see _input)
     args += ["-auto-orient"]      # fix orientation before metadata is removed
     geometry = resize_geometry(settings)
     if geometry:
@@ -616,7 +625,7 @@ def thumbnail(magick: Magick, source: str | os.PathLike, size: int, dest: str) -
     source = Path(source).absolute()
     check_size(magick.identify(source))
     cmd = magick.convert_cmd + [
-        _input(source, magick.version), "-auto-orient",
+        _input(source, magick.version), "-delete", "1--1", "-auto-orient",
         "-thumbnail", f"{size}x{size}>", f"PNG:{dest}",
     ]
     _run(cmd, None)

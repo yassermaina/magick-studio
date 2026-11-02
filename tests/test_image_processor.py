@@ -745,3 +745,16 @@ def test_error_hides_path_with_at_sign(tmp_path):
     r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
     assert not r.ok and r.error
     assert "secret" not in r.error and str(tmp_path) not in r.error and "s.bmp" not in r.error
+
+
+def test_percent_name_with_many_frames_stays_bounded(tmp_path):
+    """ImageMagick 6 cannot read only frame 0 of a name with "%" (see _input),
+    so there the total size of all frames is checked instead."""
+    src = _gif_frames(tmp_path / "f.gif", 16, 4000)              # 256 MP in total
+    src = src.rename(tmp_path / "f%d.gif")
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+    if MAGICK.version >= 7:
+        assert r.ok, r.error
+        assert dims(r.output) == (4000, 4000, "PNG")
+    else:
+        assert not r.ok and "too large" in r.error
