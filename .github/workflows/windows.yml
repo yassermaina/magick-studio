@@ -37,7 +37,8 @@ jobs:
           Get-Command magick -ErrorAction SilentlyContinue | Format-List Source, Version
 
       - name: Install Python dependencies
-        run: python -m pip install --require-hashes --only-binary=:all: -r windows/requirements.txt
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r windows/requirements.txt
 
       - name: Stage bundled ImageMagick
         run: |
