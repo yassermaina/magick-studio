@@ -722,3 +722,26 @@ def test_animated_frames_cannot_bypass_pixel_limit(tmp_path):
     assert peak_kb < 1_000_000, f"ImageMagick used {peak_kb // 1024} MB"
     out = tmp_path / "output" / "frames.png"
     assert dims(out) == (4000, 4000, "PNG")
+
+
+@pytest.mark.parametrize("name", ["p%d.png", "x%03d.png", "z%%.png", "50%.png"])
+def test_percent_in_filename_reads_that_file(tmp_path, name):
+    """With "[0]", ImageMagick expands %d in names; it must not pick another file."""
+    make_image(tmp_path / "p0.png", size="400x400")
+    make_image(tmp_path / "x000.png", size="400x400")
+    src = tmp_path / name   # copied: ImageMagick would expand "%" in an output name
+    src.write_bytes(make_image(tmp_path / "small.png", size="40x30").read_bytes())
+    assert MAGICK.identify(src).width == 40
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+    assert r.ok, r.error
+    assert r.output.name == name and dims(r.output) == (40, 30, "PNG")
+
+
+def test_error_hides_path_with_at_sign(tmp_path):
+    folder = tmp_path / "home @ secret"
+    folder.mkdir()
+    src = folder / "it' s.bmp"
+    src.write_bytes(b"BM" + b"x" * 40)
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+    assert not r.ok and r.error
+    assert "secret" not in r.error and str(tmp_path) not in r.error and "s.bmp" not in r.error

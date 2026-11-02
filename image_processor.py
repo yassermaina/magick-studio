@@ -302,13 +302,14 @@ def _input(path: Path) -> str:
     """Absolute input path with an explicit decoder, e.g. "PNG:/photos/a.png[0]".
 
     "[0]" reads only the first frame of animated or multi-page files, so
-    hundreds of frames cannot get past the MAX_PIXELS check.
+    hundreds of frames cannot get past the MAX_PIXELS check. With "[0]",
+    ImageMagick expands "%d" and the like in the name, so "%" is escaped.
     """
     coder = sniff_coder(path)
     if coder is None:
         raise MagickError("Not a supported image (JPEG, PNG, WebP, AVIF, GIF, BMP, "
                           "TIFF, HEIC or JPEG XL)")
-    return f"{coder}:{path.absolute()}[0]"
+    return f"{coder}:{str(path.absolute()).replace('%', '%%')}[0]"
 
 
 def check_size(info: ImageInfo) -> None:
@@ -597,10 +598,11 @@ def _clean_error(stderr: str) -> str:
         # "magick: no decode delegate for this image format `JPG' @ error/..."
         if line.startswith(("magick:", "magick.exe:", "convert:", "identify:")):
             line = line.split(":", 1)[1].strip()
-        line = line.split(" @ ")[0]
         # Drop the quoted file path ImageMagick appends; the UI already shows it.
-        # IM6 quotes it `like this', IM7 'like this'; paths may contain quotes.
-        line = re.sub(r"\s*[`'](?:[A-Z]+:)?(?:/|[A-Za-z]:\\|\\\\).*?'(?=[:\s]|$)", "", line)
+        # IM6 quotes it `like this', IM7 'like this'; paths may contain quotes
+        # and " @ ", so this runs before the source location is cut off.
+        line = re.sub(r"\s*[`'](?:[A-Z]+:)?(?:/|[A-Za-z]:\\|\\\\).*'(?=[:\s]|$)", "", line)
+        line = line.rsplit(" @ ", 1)[0]
         return line[:300]
     return ""
 
