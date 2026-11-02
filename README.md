@@ -4,16 +4,20 @@ A simple desktop app for resizing, compressing, converting and optimizing images
 [ImageMagick](https://imagemagick.org), without typing long command lines.
 
 - **Linux:** a native GNOME app (GTK 4 / Libadwaita). Install from source with `install.sh`.
-- **Windows (new in v1.1.0):** a Qt (PySide6) app with ImageMagick built in. Install it
+- **Windows (since v1.1.0):** a Qt (PySide6) app with ImageMagick built in. Install it
   with a normal setup program. No administrator rights or separate ImageMagick needed.
 
 Both editions share the same image-processing engine and have the same features.
+
+**Latest release: v1.1.1**, a security and reliability update for Linux and Windows
+with no new features. Upgrading is recommended, especially if you open images from
+untrusted sources. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Downloads
 
 | Platform | Get it | Notes |
 | --- | --- | --- |
-| Windows x64 | [`MagickStudio-Setup-1.1.0-x64.exe`](https://github.com/yassermaina/magick-studio/releases/latest) from the latest release | Per-user installer, about 37 MB. See [Windows installation](#windows-installation). |
+| Windows x64 | [`MagickStudio-Setup-1.1.1-x64.exe`](https://github.com/yassermaina/magick-studio/releases/latest) from the latest release | Per-user installer, about 38 MB. See [Windows installation](#windows-installation). |
 | Linux | Source code (`git clone` or the release's source archive) | Run `./install.sh`. See [Linux installation](#linux-installation). |
 
 All versions are listed on the [Releases](https://github.com/yassermaina/magick-studio/releases) page.
@@ -131,6 +135,10 @@ Options:
 If `~/.local/bin` was not on your `PATH` yet, open a new terminal (or log out and back
 in) before typing `magick-studio`. The app-menu launcher works right away.
 
+To **update**, get the new source (`git pull`, or download the new release's source
+archive) and run `./install.sh` again. It replaces the installed files. Updating from
+v1.1.0 this way is tested in CI on Ubuntu 24.04.
+
 #### Fedora
 
 ```bash
@@ -209,17 +217,17 @@ or overwritten.
 
 ### Requirements
 
-- Windows 10 or 11, **64-bit (x64)**
+- Windows 10 version 1809 or later, or Windows 11, **64-bit (x64)**
 - About 150 MB of disk space
 - Nothing else. ImageMagick and Python are included.
 
 ### Installing
 
 1. Open the [latest release](https://github.com/yassermaina/magick-studio/releases/latest).
-2. Under **Assets**, download `MagickStudio-Setup-1.1.0-x64.exe`.
+2. Under **Assets**, download `MagickStudio-Setup-1.1.1-x64.exe`.
 3. *(Optional)* Check the download. In PowerShell, run
-   `Get-FileHash .\MagickStudio-Setup-1.1.0-x64.exe` and compare the result with the
-   SHA-256 in the release notes.
+   `Get-FileHash .\MagickStudio-Setup-1.1.1-x64.exe` and compare the result with the
+   SHA-256 in the release notes and in `SHA256SUMS.txt`.
 4. Double-click the installer. The installer is not code-signed, so Windows SmartScreen
    may show **"Windows protected your PC"**. Click **More info**, then **Run anyway**.
 5. Accept the license and keep the default folder (`%LOCALAPPDATA%\Programs\Magick Studio`).
@@ -228,7 +236,11 @@ or overwritten.
 6. Click **Install**, then **Finish** to start Magick Studio.
 7. Later, open **Magick Studio** from the Start menu.
 
-To **update**, run the newer installer. It replaces the old version in place.
+To **update** (for example from 1.1.0 to 1.1.1), close Magick Studio and run the newer
+installer. It replaces the old version in place and keeps one Start Menu entry and one
+entry in *Installed apps*. Your images and output folders are not touched. The upgrade
+from the published 1.1.0 installer is tested automatically on Windows Server 2025 (see
+[What was tested on Windows](#what-was-tested-on-windows)).
 
 ### Using Magick Studio on Windows
 
@@ -257,8 +269,8 @@ Your images and `output` folders are never touched.
 Every change is built and tested on GitHub-hosted **Windows Server 2025 x64** runners
 (build 26100). Each run:
 
-- runs the backend tests (52 passed; 5 Linux- or `cwebp`-specific tests skipped) and the
-  Qt interface tests (10 passed) on real Windows, against the bundled ImageMagick
+- runs the backend tests (75 passed; 5 Linux-, GTK- or `cwebp`-specific tests skipped)
+  and the Qt interface tests (11 passed) on real Windows, against the bundled ImageMagick
 - checks the packaged app for all required files (Qt plugins, MSVC runtime, ImageMagick,
   licenses)
 - converts real images with the packaged app, with Python and the runner's own
@@ -268,6 +280,12 @@ Every change is built and tested on GitHub-hosted **Windows Server 2025 x64** ru
 - installs the app silently, checks the Start Menu shortcut and the per-user Apps entry,
   converts images with the installed app, re-installs over it, uninstalls it, and checks
   that the user's images were not touched
+- downloads the published v1.1.0 installer, checks its SHA-256, installs it, upgrades it
+  with the new installer, checks the new version, shortcut and uninstall entry, converts
+  JPEG, PNG, WebP and AVIF images with the upgraded app, and uninstalls it
+
+These are automated tests on a Windows Server runner, not on a Windows 10 or Windows 11
+desktop PC.
 
 ## Troubleshooting
 
@@ -281,8 +299,8 @@ Magick Studio, and if needed allow
 `%LOCALAPPDATA%\Programs\Magick Studio\_internal\imagemagick\magick.exe` in your
 antivirus.
 
-**Windows: the app doesn't start on Windows on ARM.** Only x64 builds are provided, and
-they have not been tested on ARM64 devices.
+**Windows: the installer refuses to run on Windows on ARM.** Only an x64 build is
+provided, and the installer only allows x64 Windows. ARM64 devices are not supported.
 
 **Linux: "ImageMagick not found".** Install ImageMagick (`sudo dnf install ImageMagick`
 or `sudo apt install imagemagick`), or rerun `./install.sh`.
@@ -313,6 +331,15 @@ format.
   Ubuntu 24.04 and Debian 13, but not on Fedora 44 without `ImageMagick-heic`.
   `--with-avif` installs that package; AVIF encoding through it was not verified.
 - **Animated GIF/WebP:** only the first frame is processed.
+- **Very large images:** images over 200 megapixels are refused, to protect against
+  crafted files that would use many gigabytes of memory.
+- **File contents are checked:** files are accepted only if their content is one of the
+  supported image formats, whatever their name. PostScript, PDF and SVG files renamed
+  to `.jpg` (for example) are refused.
+- **Linux uses your system's ImageMagick.** Its security fixes come from your
+  distribution's updates, and its resource limits from the system `policy.xml`.
+  Keep ImageMagick updated. The Windows edition bundles ImageMagick 7.1.2-35 with a
+  restrictive policy.
 - **Small inputs can grow:** converting small or already optimized images can make
   them slightly *larger*. The app reports this as "% larger".
 - **Debian 12:** not supported, because its Libadwaita (1.2) is older than 1.5 (verified).
@@ -322,8 +349,8 @@ format.
 - **Windows versions:** automated tests run on Windows Server 2025 x64 (Windows 11 24H2
   codebase). The app has **not** been tested on Windows 10 or on a Windows 11 desktop PC.
   It is expected to work on both (x64), but this is not verified yet.
-- **Windows on ARM:** not supported. Only an x64 build is provided, and it has not been
-  tested under ARM64 emulation.
+- **Windows on ARM:** not supported. Only an x64 build is provided, and the installer
+  refuses to run on ARM64 Windows.
 - **Windows drag and drop:** implemented, but only covered by the automated tests through
   the same code path that *Add Images* uses, not by simulating a real mouse drag.
 - **Windows long paths:** paths longer than 260 characters have not been tested.
@@ -398,6 +425,7 @@ python -m pytest tests windows\tests
 
 | Version | Platforms |
 | --- | --- |
+| [v1.1.1](https://github.com/yassermaina/magick-studio/releases/tag/v1.1.1) | Linux and Windows (x64 installer): security and reliability update |
 | [v1.1.0](https://github.com/yassermaina/magick-studio/releases/tag/v1.1.0) | Linux and Windows (x64 installer) |
 | [v1.0.0](https://github.com/yassermaina/magick-studio/releases/tag/v1.0.0) | Linux |
 

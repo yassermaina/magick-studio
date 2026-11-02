@@ -11,8 +11,8 @@ windows/
   build.ps1               build script: ImageMagick → app → installer
   installer.iss           Inno Setup script (per-user installer)
   ci/winci.py             checks for the packaged app and installer, used by CI
-  requirements.txt        pinned Python build/test dependencies
-  licenses/               LGPL/GPL texts shipped with the app (Qt, PySide6)
+  requirements.txt        Python build/test dependencies, pinned with SHA-256 hashes
+  licenses/               LGPL/GPL (Qt) and Apache-2.0 (OpenSSL) texts shipped with the app
   THIRD-PARTY-NOTICES.txt third-party notices shipped with the app
 ```
 
@@ -84,12 +84,18 @@ python windows\ci\winci.py bundle-check build\windows\dist\MagickStudio
 python windows\ci\winci.py smoke build\windows\dist\MagickStudio\MagickStudio.exe build\ci\samples build\ci
 python windows\ci\winci.py gui-check build\windows\dist\MagickStudio\MagickStudio.exe build\ci\samples build\ci\gui.json
 python windows\ci\winci.py console-check build\windows\dist\MagickStudio\MagickStudio.exe build\ci\samples build\ci
-python windows\ci\winci.py install-test build\windows\installer\MagickStudio-Setup-1.1.0-x64.exe build\ci
+python windows\ci\winci.py install-test build\windows\installer\MagickStudio-Setup-1.1.1-x64.exe build\ci
+python windows\ci\winci.py upgrade-test build\windows\installer\MagickStudio-Setup-1.1.1-x64.exe build\ci
 ```
 
 `smoke` and `gui-check` run the app with a minimal `PATH`, so they fail if it uses
-anything other than its bundled ImageMagick. `install-test` installs, upgrades and
-uninstalls the app for the current user. Run it only on a test machine or VM.
+anything other than its bundled ImageMagick. `install-test` installs, reinstalls and
+uninstalls the app for the current user. `upgrade-test` downloads the previous
+published installer (`PREVIOUS_VERSION` in `winci.py`), checks its SHA-256 against
+the pinned value and the release's `SHA256SUMS.txt`, installs it, upgrades it with
+the new installer, checks the version, shortcuts and uninstall entries, processes
+JPEG, PNG, WebP and AVIF images and uninstalls. Run both only on a test machine or
+VM. After each release, update `PREVIOUS_VERSION` and `PREVIOUS_SHA256`.
 
 ## Continuous integration
 
@@ -114,8 +120,14 @@ its own ImageMagick on `PATH`. The tests set `MAGICK_STUDIO_MAGICK` or a minimal
 
 The app is MIT-licensed. The package also includes:
 
-- ImageMagick (ImageMagick License): `_internal\imagemagick\LICENSE.txt`, `NOTICE.txt`
+- ImageMagick (ImageMagick License): `_internal\imagemagick\LICENSE.txt`, `NOTICE.txt`.
+  `magick.exe` is the unmodified official build. It has about 40 libraries built
+  in, some under the LGPL (cairo, glib, pango, librsvg, libheif, libde265 and others).
+  `NOTICE.txt` lists each one with its license and the source revision it was
+  built from.
 - Qt 6 / PySide6 (LGPL-3.0), dynamically linked: `_internal\licenses\`
 - Python (PSF License): `_internal\licenses\Python-LICENSE.txt`
+- OpenSSL (Apache-2.0), used by Python and Qt: `_internal\licenses\Apache-2.0.txt`
+- Mesa llvmpipe (`opengl32sw.dll`, MIT) and the Microsoft Visual C++ runtime
 
 See `THIRD-PARTY-NOTICES.txt`.

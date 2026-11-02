@@ -38,7 +38,12 @@ _EXT_TO_FORMAT = {
     ".png": "png", ".webp": "webp", ".avif": "avif",
 }
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
+
+# Images larger than this are refused before decoding. ImageMagick keeps
+# pixels as floats, so a small crafted file (a "decompression bomb") could
+# otherwise take many gigabytes of memory and disk per image.
+MAX_PIXELS = 200_000_000
 
 DEFAULT_OUTPUT_DIRNAME = "output"
 DEFAULT_QUALITY = 82
@@ -153,8 +158,12 @@ class Magick:
     def detect(cls) -> "Magick":
         cwebp = shutil.which("cwebp")
         override = os.environ.get("MAGICK_STUDIO_MAGICK")
-        if override and not os.path.isfile(override):
-            raise MagickError(f"MAGICK_STUDIO_MAGICK points to a missing file: {override}")
+        if override:
+            resolved = shutil.which(override)   # a full path, or a name on PATH
+            if not resolved:
+                raise MagickError("MAGICK_STUDIO_MAGICK is not an executable program: "
+                                  f"{override}")
+            override = resolved
         magick = override or _bundled_magick() or shutil.which("magick")
         if magick:
             return cls([magick], [magick, "identify"], 7, cwebp)
@@ -217,9 +226,12 @@ class Magick:
 
     def identify(self, path: str | os.PathLike) -> ImageInfo:
         path = Path(path).absolute()
+        if not path.is_file():
+            raise MagickError("File not found")
+        source = _input(path, self.version)
         try:
             proc = subprocess.run(
-                self.identify_cmd + ["-ping", "-quiet", "-format", "%w %h %m\n", str(path)],
+                self.identify_cmd + ["-ping", "-quiet", "-format", "%w %h %m\n", source],
                 capture_output=True, encoding="utf-8", errors="replace",
                 timeout=60, **POPEN_FLAGS,
             )
@@ -231,10 +243,16 @@ class Magick:
         if proc.returncode != 0 or not lines:
             raise MagickError(_clean_error(proc.stderr) or "Not a valid image")
         try:
-            w, h, fmt = lines[0].split(maxsplit=2)
-            return ImageInfo(path, int(w), int(h), fmt, path.stat().st_size)
+            frames = [line.split(maxsplit=2) for line in lines]
+            total = sum(int(w) * int(h) for w, h, _ in frames)
+            w, h, fmt = frames[0]
+            info = ImageInfo(path, int(w), int(h), fmt, path.stat().st_size)
         except (ValueError, OSError) as exc:
             raise MagickError(f"Could not read image information: {exc}")
+        if total > MAX_PIXELS:   # only when all frames are read (see _input)
+            raise MagickError(f"Image is too large ({len(frames)} frames; "
+                              f"the limit is {MAX_PIXELS // 1_000_000} megapixels)")
+        return info
 
 
 def parse_writable_formats(listing: str) -> set[str]:
@@ -248,6 +266,68 @@ def parse_writable_formats(listing: str) -> set[str]:
         if mode[1:2] == "w":
             formats.add(parts[0].rstrip("*").upper())
     return formats
+
+
+def sniff_coder(path: str | os.PathLike) -> str | None:
+    """ImageMagick decoder for a file, from its signature; None if not a supported image.
+
+    ImageMagick picks the decoder from the file content, not the name. Without
+    this, a "photo.jpg" that is really PostScript, PDF, SVG or MVG would be
+    handed to Ghostscript or a vector renderer, which can read other files.
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(64)
+    except OSError:
+        return None
+    if head.startswith(b"\xff\xd8\xff"):
+        return "JPEG"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "PNG"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "GIF"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WEBP"
+    if head[:4] in (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+"):
+        return "TIFF"
+    if head[:2] == b"BM" and len(head) >= 26:
+        return "BMP"
+    if head[:2] == b"\xff\x0a" or head[:12] == b"\x00\x00\x00\x0cJXL \r\n\x87\n":
+        return "JXL"
+    if head[4:8] == b"ftyp":   # ISO media: major brand plus compatible brands
+        size = int.from_bytes(head[:4], "big")
+        brands = {head[i:i + 4] for i in range(8, min(size, len(head)) - 3, 4)}
+        if brands & {b"avif", b"avis"}:
+            return "AVIF"
+        if brands & {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1"}:
+            return "HEIC"
+    return None
+
+
+def _input(path: Path, version: int) -> str:
+    """Absolute input path with an explicit decoder, e.g. "PNG:/photos/a.png[0]".
+
+    "[0]" reads only the first frame of animated or multi-page files, so
+    hundreds of frames cannot get past the MAX_PIXELS check. With "[0]",
+    ImageMagick expands "%d" and the like in the name. ImageMagick 7 accepts
+    "%%" for a literal "%"; ImageMagick 6 does not, so there a name with "%"
+    is passed without "[0]" (all frames are read; identify() then limits the
+    total size and build_command() drops the extra frames).
+    """
+    coder = sniff_coder(path)
+    if coder is None:
+        raise MagickError("Not a supported image (JPEG, PNG, WebP, AVIF, GIF, BMP, "
+                          "TIFF, HEIC or JPEG XL)")
+    name = str(path.absolute())
+    if version < 7 and "%" in name:
+        return f"{coder}:{name}"
+    return f"{coder}:{name.replace('%', '%%')}[0]"
+
+
+def check_size(info: ImageInfo) -> None:
+    if info.width * info.height > MAX_PIXELS:
+        raise MagickError(f"Image is too large ({info.width} × {info.height}; "
+                          f"the limit is {MAX_PIXELS // 1_000_000} megapixels)")
 
 
 def _bundled_magick() -> str | None:
@@ -335,8 +415,8 @@ def build_command(magick: Magick, source: Path, dest: str, settings: Settings,
     """
     fmt = "png" if intermediate else resolve_output_format(source, settings)
     args = list(magick.convert_cmd)
-    args += [str(source.absolute())]
-    args += ["-delete", "1--1"]   # use first frame of animated/multi-page files
+    args += [_input(source, magick.version)]      # first frame of animated/multi-page files
+    args += ["-delete", "1--1"]   # no-op unless all frames had to be read (see _input)
     args += ["-auto-orient"]      # fix orientation before metadata is removed
     geometry = resize_geometry(settings)
     if geometry:
@@ -435,6 +515,7 @@ def process_image(
         result.original_size = source.stat().st_size
         if not os.access(source, os.R_OK):
             raise MagickError("Permission denied reading file")
+        check_size(magick.identify(source))
         if settings.output_format != "original" and \
                 OUTPUT_FORMATS[settings.output_format][0] not in magick.writable_formats():
             raise MagickError(
@@ -530,17 +611,21 @@ def _clean_error(stderr: str) -> str:
         # "magick: no decode delegate for this image format `JPG' @ error/..."
         if line.startswith(("magick:", "magick.exe:", "convert:", "identify:")):
             line = line.split(":", 1)[1].strip()
-        line = line.split(" @ ")[0]
         # Drop the quoted file path ImageMagick appends; the UI already shows it.
-        line = re.sub(r"\s*`(?:/|[A-Za-z]:\\|\\\\)[^']*'", "", line)
+        # IM6 quotes it `like this', IM7 'like this'; paths may contain quotes
+        # and " @ ", so this runs before the source location is cut off.
+        line = re.sub(r"\s*[`'](?:[A-Z]+:)?(?:/|[A-Za-z]:\\|\\\\).*'(?=[:\s]|$)", "", line)
+        line = line.rsplit(" @ ", 1)[0]
         return line[:300]
     return ""
 
 
 def thumbnail(magick: Magick, source: str | os.PathLike, size: int, dest: str) -> None:
     """Render a PNG preview (used for formats GdkPixbuf cannot load)."""
+    source = Path(source).absolute()
+    check_size(magick.identify(source))
     cmd = magick.convert_cmd + [
-        str(Path(source).absolute()), "-delete", "1--1", "-auto-orient",
+        _input(source, magick.version), "-delete", "1--1", "-auto-orient",
         "-thumbnail", f"{size}x{size}>", f"PNG:{dest}",
     ]
     _run(cmd, None)
@@ -557,6 +642,7 @@ def human_size(num: float) -> str:
 __all__ = [
     "Magick", "MagickError", "Settings", "ImageInfo", "ProcessResult",
     "OUTPUT_FORMATS", "SUPPORTED_EXTENSIONS", "QUALITY_PRESETS", "DEFAULT_QUALITY",
+    "MAX_PIXELS", "sniff_coder", "check_size",
     "web_preset", "scan_folder", "is_supported", "process_image", "build_command",
     "resize_geometry", "reserve_unique_path", "thumbnail", "human_size",
 ]

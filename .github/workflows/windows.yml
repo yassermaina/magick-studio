@@ -24,9 +24,9 @@ jobs:
       MAGICK_STUDIO_NO_DIALOGS: "1"
       WORK: ${{ github.workspace }}\build\ci
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/setup-python@v7.1.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.13"
 
@@ -37,7 +37,8 @@ jobs:
           Get-Command magick -ErrorAction SilentlyContinue | Format-List Source, Version
 
       - name: Install Python dependencies
-        run: python -m pip install -r windows/requirements.txt
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r windows/requirements.txt
 
       - name: Stage bundled ImageMagick
         run: |
@@ -87,16 +88,21 @@ jobs:
       - name: Build installer (Inno Setup)
         run: ./windows/build.ps1 -Steps installer
 
-      - name: Install, upgrade and uninstall
+      - name: Install, reinstall and uninstall
         run: |
           $setup = (Get-ChildItem build/windows/installer/MagickStudio-Setup-*-x64.exe).FullName
           python windows/ci/winci.py install-test $setup $env:WORK
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-FileHash $setup -Algorithm SHA256 | Format-List Algorithm, Hash, Path
 
+      - name: Upgrade from the published previous release
+        run: |
+          $setup = (Get-ChildItem build/windows/installer/MagickStudio-Setup-*-x64.exe).FullName
+          python windows/ci/winci.py upgrade-test $setup $env:WORK
+
       - name: Upload installer
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: MagickStudio-Setup-x64
           path: build/windows/installer/*.exe
@@ -104,7 +110,7 @@ jobs:
 
       - name: Upload portable build
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: MagickStudio-portable-x64
           path: build/windows/dist/MagickStudio
@@ -112,7 +118,7 @@ jobs:
 
       - name: Upload test reports and screenshots
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: windows-test-reports
           path: |

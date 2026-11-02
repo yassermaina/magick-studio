@@ -8,6 +8,7 @@ Usage (on Windows, from the repository root):
   python windows/ci/winci.py console-check APP_EXE SAMPLES_DIR WORK_DIR
   python windows/ci/winci.py screenshot APP_EXE SAMPLES_DIR OUT.png [--dark]
   python windows/ci/winci.py install-test SETUP_EXE WORK_DIR
+  python windows/ci/winci.py upgrade-test SETUP_EXE WORK_DIR
 
 Every command prints what it verified and exits non-zero on failure.
 """
@@ -15,11 +16,13 @@ from __future__ import annotations
 
 import ctypes
 import glob
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -31,6 +34,14 @@ import image_processor as ip  # noqa: E402
 APP_NAME = "Magick Studio"
 APP_ID = "{6F3C2A8E-4B1D-4E7A-9C55-2D8F1B7E9A31}_is1"
 CONSOLE_CLASSES = {"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS"}
+
+# Published release that upgrade-test installs first. The checksum is pinned
+# here and must also match the release's SHA256SUMS.txt.
+PREVIOUS_VERSION = "1.1.0"
+PREVIOUS_RELEASE = ("https://github.com/yassermaina/magick-studio/releases/download/"
+                    f"v{PREVIOUS_VERSION}/")
+PREVIOUS_SETUP = f"MagickStudio-Setup-{PREVIOUS_VERSION}-x64.exe"
+PREVIOUS_SHA256 = "a5971e236f297dbb9ee46e143ff432adb4437eff437b8b8d32d3df0578482b9c"
 
 user32 = ctypes.windll.user32 if sys.platform == "win32" else None
 
@@ -102,6 +113,7 @@ def cmd_samples(out_dir: str):
         "logo & icon (1).png": ["-size", "300x300", "xc:none", "-fill", "#e33",
                                 "-draw", "circle 150,150 150,30"],
         "Unicode é 写真/café ünï.webp": ["-size", "1200x800", "gradient:navy-orange"],
+        "phone shot.avif": ["-size", "1800x1200", "gradient:teal-white"],
     }
     for name, spec in jobs.items():
         subprocess.run(m.convert_cmd + spec + [str(out / name)], check=True, **ip.POPEN_FLAGS)
@@ -119,6 +131,7 @@ def cmd_bundle_check(app_dir: str):
         "ImageMagick policy": internal / "imagemagick" / "policy.xml",
         "LGPL text": internal / "licenses" / "LGPL-3.0.txt",
         "Python license": internal / "licenses" / "Python-LICENSE.txt",
+        "Apache-2.0 text (OpenSSL)": internal / "licenses" / "Apache-2.0.txt",
         "app license": app / "LICENSE.txt",
         "third-party notices": app / "THIRD-PARTY-NOTICES.txt",
         "icon": internal / "assets" / "icon.ico",
@@ -151,10 +164,30 @@ def cmd_bundle_check(app_dir: str):
     formats = ip.parse_writable_formats(subprocess.run(
         [magick, "-list", "format"], capture_output=True, encoding="utf-8",
         errors="replace", env=clean_env(), **ip.POPEN_FLAGS).stdout)
-    for f in ("JPEG", "PNG", "WEBP"):
+    for f in ("JPEG", "PNG", "WEBP", "AVIF"):
         if f not in formats:
             fail(f"bundled ImageMagick cannot write {f}")
-    ok(f"bundled ImageMagick writes JPEG/PNG/WEBP; AVIF={'AVIF' in formats}")
+    ok("bundled ImageMagick writes JPEG/PNG/WEBP/AVIF")
+
+    # The restrictive policy must be the one in effect.
+    run = dict(capture_output=True, encoding="utf-8", errors="replace", env=clean_env(),
+               **ip.POPEN_FLAGS)
+    policy = subprocess.run([magick, "-list", "policy"], **run).stdout
+    if "list-length" not in policy or "MSVG" not in policy:
+        fail(f"Magick Studio policy is not active:\n{policy}")
+    with tempfile.TemporaryDirectory() as tmp:
+        svg = Path(tmp, "x.svg")
+        svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>')
+        for coder in ("MSVG", "SVG", "MVG", "PS", "PDF", "TEXT"):
+            r = subprocess.run([magick, f"{coder}:{svg}", f"PNG:{tmp}\\o.png"], **run)
+            if r.returncode == 0 or "not authorized" not in r.stderr:
+                fail(f"{coder} is not blocked by the bundled policy: {r.stderr.strip()}")
+        avif = Path(tmp, "a.avif")
+        r = subprocess.run([magick, "-size", "64x64", "gradient:", f"AVIF:{avif}"], **run)
+        r2 = subprocess.run([magick, f"AVIF:{avif}", f"PNG:{tmp}\\a.png"], **run)
+        if r.returncode or r2.returncode:
+            fail(f"AVIF round trip failed under the policy: {r.stderr}{r2.stderr}")
+    ok("restrictive policy active: vector/document/script coders blocked; AVIF still works")
 
 
 def run_smoke(app_exe: str, samples: str, work: Path, out: Path | None = None) -> dict:
@@ -280,14 +313,20 @@ def cmd_screenshot(app_exe: str, samples: str, out_png: str, dark: bool = False)
         rect = wintypes.RECT()                           # visible frame, without the
         ctypes.windll.dwmapi.DwmGetWindowAttribute(       # invisible resize borders
             hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect))   # DWMWA_EXTENDED_FRAME_BOUNDS
+        from PySide6.QtCore import Qt
         from PySide6.QtGui import QGuiApplication
         app = QGuiApplication.instance() or QGuiApplication([])
         shot = app.primaryScreen().grabWindow(0, rect.left, rect.top,
                                               rect.right - rect.left, rect.bottom - rect.top)
         if shot.isNull() or not shot.save(out_png):
             fail("could not capture the window")
+        # Average lightness of the whole window proves the theme really applied.
+        lightness = shot.toImage().scaled(1, 1, Qt.IgnoreAspectRatio,
+                                          Qt.SmoothTransformation).pixelColor(0, 0).lightness()
+        if (lightness > 110) if dark else (lightness < 150):
+            fail(f"window lightness {lightness} does not match the {'dark' if dark else 'light'} theme")
         ok(f"saved {out_png} ({shot.width()}x{shot.height()}, screen {sw}x{sh}, "
-           f"{'dark' if dark else 'light'})")
+           f"{'dark' if dark else 'light'}, lightness {lightness})")
         user32.PostMessageW(hwnd, 0x0010, 0, 0)          # WM_CLOSE
         proc.wait(timeout=30)
         ok(f"app closed cleanly (exit code {proc.returncode})")
@@ -371,8 +410,24 @@ def cmd_install_test(setup_exe: str, work_dir: str):
     ok("re-install over existing version succeeded and removed stale files")
 
     uninstaller = install_dir / "unins000.exe"
-    subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-                   timeout=300)
+    uninstall = [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
+
+    # While the app runs, the uninstaller must refuse (AppMutex) and leave it intact.
+    running = subprocess.Popen([str(exe)], env=clean_env())
+    try:
+        wait_for_window(running.pid)
+        refused = subprocess.run(uninstall, timeout=300).returncode
+        time.sleep(10)
+        if not exe.is_file() or not shortcut.is_file():
+            fail("uninstaller removed files while the app was running")
+        ok(f"uninstall refused while the app was running (exit code {refused})")
+    finally:
+        running.kill()
+        running.wait(timeout=30)
+
+    code = subprocess.run(uninstall, timeout=300).returncode
+    if code != 0:
+        fail(f"uninstaller exit code {code}")
     end = time.monotonic() + 120             # the uninstaller relaunches itself from %TEMP%
     while (install_dir.exists() or shortcut.exists()) and time.monotonic() < end:
         time.sleep(1)
@@ -389,6 +444,146 @@ def cmd_install_test(setup_exe: str, work_dir: str):
     if not any(user_out.iterdir()):
         fail("processed output folder was removed")
     ok(f"{len(user_files)} user images and the output folder are intact")
+
+
+def cmd_upgrade_test(setup_exe: str, work_dir: str):
+    """Install the published previous release, upgrade it with SETUP_EXE, uninstall."""
+    import urllib.request
+    import winreg
+    work = Path(work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    install_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs" / APP_NAME
+    exe = install_dir / "MagickStudio.exe"
+    programs = Path(os.environ["APPDATA"]) / r"Microsoft\Windows\Start Menu\Programs"
+    desktop = Path(os.environ["USERPROFILE"]) / "Desktop"
+    uninstall_root = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+
+    def entries(hive) -> list[tuple[str, str]]:
+        """(key, DisplayVersion) of every uninstall entry named Magick Studio."""
+        found = []
+        try:
+            root = winreg.OpenKey(hive, uninstall_root)
+        except OSError:
+            return found
+        with root:
+            for i in range(winreg.QueryInfoKey(root)[0]):
+                name = winreg.EnumKey(root, i)
+                try:
+                    with winreg.OpenKey(root, name) as k:
+                        if winreg.QueryValueEx(k, "DisplayName")[0] == APP_NAME:
+                            found.append((name, winreg.QueryValueEx(k, "DisplayVersion")[0]))
+                except OSError:
+                    continue
+        return found
+
+    def shortcuts() -> list[Path]:
+        return sorted(p for d in (programs, desktop) if d.is_dir()
+                      for p in d.rglob("*.lnk") if "magick studio" in p.name.lower())
+
+    def file_version() -> str:
+        return subprocess.run(
+            ["powershell", "-NoProfile", "-Command", f"(Get-Item '{exe}').VersionInfo.ProductVersion"],
+            capture_output=True, text=True).stdout.strip()
+
+    def install(setup: Path, log_name: str):
+        r = subprocess.run([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                            f"/LOG={work / log_name}"], timeout=600)
+        if r.returncode != 0:
+            fail(f"{setup.name} exit code {r.returncode}")
+
+    if install_dir.exists() or entries(winreg.HKEY_CURRENT_USER) or shortcuts():
+        fail("test environment is not clean: Magick Studio is already installed")
+
+    # 1-2. Published installer, verified against the pinned and published checksums.
+    old_setup = work / "previous" / PREVIOUS_SETUP
+    old_setup.parent.mkdir(exist_ok=True)
+    with urllib.request.urlopen(PREVIOUS_RELEASE + PREVIOUS_SETUP, timeout=300) as r:
+        old_setup.write_bytes(r.read())
+    sums = urllib.request.urlopen(PREVIOUS_RELEASE + "SHA256SUMS.txt", timeout=60).read().decode()
+    actual = hashlib.sha256(old_setup.read_bytes()).hexdigest()
+    if actual != PREVIOUS_SHA256:
+        fail(f"downloaded {PREVIOUS_SETUP} has SHA-256 {actual}, expected {PREVIOUS_SHA256}")
+    if f"{PREVIOUS_SHA256}  {PREVIOUS_SETUP}" not in sums:
+        fail(f"SHA256SUMS.txt of v{PREVIOUS_VERSION} does not list {PREVIOUS_SHA256}")
+    ok(f"downloaded published {PREVIOUS_SETUP}, SHA-256 {actual} matches the release")
+
+    # User images that must survive install, upgrade and uninstall.
+    user_dir = Path(os.environ["USERPROFILE"]) / "Pictures" / "Magick Studio upgrade CI"
+    for d in (user_dir, user_dir.with_name(user_dir.name + " output")):
+        shutil.rmtree(d, ignore_errors=True)
+    shutil.copytree(work / "samples", user_dir)
+    originals = {p: hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in user_dir.rglob("*") if p.is_file()}
+
+    # 3-4. Previous version installs, launches and processes real images.
+    install(old_setup, "upgrade-old.log")
+    if entries(winreg.HKEY_CURRENT_USER) != [(APP_ID, PREVIOUS_VERSION)] or \
+            not file_version().startswith(PREVIOUS_VERSION):
+        fail(f"v{PREVIOUS_VERSION} install: {entries(winreg.HKEY_CURRENT_USER)}, "
+             f"file version {file_version()!r}")
+    old_out = user_dir.with_name(user_dir.name + " output") / "old"
+    data = run_smoke(str(exe), str(user_dir), work, old_out)
+    if data["exit_code"] != 0 or not data["ok"] or data["version"] != PREVIOUS_VERSION:
+        fail(f"v{PREVIOUS_VERSION} smoke test failed: {data}")
+    ok(f"v{PREVIOUS_VERSION} installed and converted {len(data['results'])} images")
+    run_gui_check(str(exe), str(user_dir), work / "previous-gui.json", len(originals))
+
+    # 5-7. Candidate installs over it; the version changes and the app starts.
+    install(Path(setup_exe), "upgrade-new.log")
+    found = entries(winreg.HKEY_CURRENT_USER)
+    if found != [(APP_ID, ip.APP_VERSION)]:
+        fail(f"uninstall entries after upgrade: {found}")
+    if entries(winreg.HKEY_LOCAL_MACHINE):
+        fail("an uninstall entry exists in HKLM")
+    if not file_version().startswith(ip.APP_VERSION):
+        fail(f"MagickStudio.exe version after upgrade is {file_version()!r}")
+    ok(f"upgraded {PREVIOUS_VERSION} -> {ip.APP_VERSION}: one uninstall entry, "
+       f"file version {file_version()}")
+    run_gui_check(str(exe), str(user_dir), work / "upgraded-gui.json", len(originals))
+
+    # 8. JPEG, PNG, WebP and AVIF inputs with the upgraded app.
+    new_out = user_dir.with_name(user_dir.name + " output") / "new"
+    data = run_smoke(str(exe), str(user_dir), work, new_out)
+    if data["exit_code"] != 0 or not data["ok"] or data["version"] != ip.APP_VERSION:
+        fail(f"upgraded app smoke test failed: {data}")
+    if not Path(data["magick"]).resolve().is_relative_to(install_dir):
+        fail(f"upgraded app used a non-bundled ImageMagick: {data['magick']}")
+    inputs = sorted({Path(r["source"]).suffix.lower() for r in data["results"]})
+    if not {".jpg", ".png", ".webp", ".avif"} <= set(inputs):
+        fail(f"inputs processed: {inputs}")
+    ok(f"upgraded app converted {len(data['results'])} images ({', '.join(inputs)})")
+
+    # 9-10. Originals unchanged; no duplicate shortcuts, entries or uninstallers.
+    for path, digest in originals.items():
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            fail(f"original changed: {path}")
+    ok(f"{len(originals)} originals unchanged (SHA-256)")
+    links = shortcuts()
+    if links != [programs / f"{APP_NAME}.lnk"]:
+        fail(f"shortcuts after upgrade: {links}")
+    uninstallers = sorted(p.name for p in install_dir.glob("unins*.exe"))
+    if uninstallers != ["unins000.exe"]:
+        fail(f"uninstallers after upgrade: {uninstallers}")
+    ok("one Start Menu shortcut, one uninstall entry, one uninstaller")
+
+    # 11-12. Uninstall removes the app; user images and outputs stay.
+    code = subprocess.run([str(install_dir / "unins000.exe"), "/VERYSILENT",
+                           "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=300).returncode
+    if code != 0:
+        fail(f"uninstaller exit code {code}")
+    end = time.monotonic() + 120             # the uninstaller relaunches itself from %TEMP%
+    while (install_dir.exists() or shortcuts()) and time.monotonic() < end:
+        time.sleep(1)
+    if install_dir.exists() or shortcuts() or entries(winreg.HKEY_CURRENT_USER):
+        fail(f"left after uninstall: folder {install_dir.exists()}, shortcuts {shortcuts()}, "
+             f"entries {entries(winreg.HKEY_CURRENT_USER)}")
+    ok("uninstall removed the app folder, shortcut and uninstall entry")
+    for path, digest in originals.items():
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            fail(f"user image changed or removed: {path}")
+    if not any(old_out.iterdir()) or not any(new_out.iterdir()):
+        fail("processed output folders were removed")
+    ok("user images and processed outputs are intact")
 
 
 def main():
@@ -410,6 +605,8 @@ def main():
         cmd_screenshot(args[0], args[1], args[2], dark="--dark" in args)
     elif cmd == "install-test":
         cmd_install_test(*args)
+    elif cmd == "upgrade-test":
+        cmd_upgrade_test(*args)
     else:
         fail(f"unknown command {cmd}")
 

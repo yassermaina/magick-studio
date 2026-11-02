@@ -358,10 +358,10 @@ def test_resize_geometry():
 
 
 def test_command_never_uses_shell(tmp_path):
-    src, tmp = tmp_path / "a b.png", tmp_path / "t.tmp"
+    src, tmp = make_image(tmp_path / "a b.png"), tmp_path / "t.tmp"
     cmd = ip.build_command(MAGICK, src, str(tmp), ip.web_preset())
     assert isinstance(cmd, list)
-    assert str(src.resolve()) in cmd and cmd[-1] == f"WEBP:{tmp}"
+    assert f"PNG:{src.absolute()}[0]" in cmd and cmd[-1] == f"WEBP:{tmp}"
 
 
 def test_parse_writable_formats():
@@ -381,6 +381,8 @@ def test_parse_writable_formats():
 def cwebp_magick():
     """A Magick instance forced to encode WebP through cwebp."""
     if not MAGICK.cwebp:
+        if os.environ.get("MAGICK_STUDIO_REQUIRE_ALL"):   # Linux CI installs cwebp
+            pytest.fail("cwebp not installed", pytrace=False)
         pytest.skip("cwebp not installed")
     m = ip.Magick(MAGICK.convert_cmd, MAGICK.identify_cmd, MAGICK.version, MAGICK.cwebp)
     m._webp_quality_ok = False
@@ -415,7 +417,8 @@ def test_cwebp_fallback_invalid_image(tmp_path, cwebp_magick):
     bad.write_text("nope")
     r = ip.process_image(cwebp_magick, bad, settings(tmp_path, output_format="webp"))
     assert not r.ok
-    assert list((tmp_path / "out").iterdir()) == []
+    out = tmp_path / "out"      # refused before the output folder is even created
+    assert not out.exists() or list(out.iterdir()) == []
 
 
 def test_human_size():
@@ -493,6 +496,7 @@ def test_cancel_leaves_no_running_process(tmp_path, monkeypatch):
 def _fake_exe(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("")
+    path.chmod(0o755)
     return str(path)
 
 
@@ -507,12 +511,21 @@ def test_detect_prefers_bundled_imagemagick(tmp_path, monkeypatch):
 
 
 def test_detect_env_override(tmp_path, monkeypatch):
-    exe = _fake_exe(tmp_path / "custom" / "magick")
+    name = "magick.exe" if sys.platform == "win32" else "magick"
+    exe = _fake_exe(tmp_path / "custom" / name)
     monkeypatch.setenv("MAGICK_STUDIO_MAGICK", exe)
-    assert ip.Magick.detect().convert_cmd == [exe]
+    assert os.path.normcase(ip.Magick.detect().convert_cmd[0]) == os.path.normcase(exe)
+    monkeypatch.setenv("PATH", str(tmp_path / "custom"))            # a bare name on PATH
+    monkeypatch.setenv("MAGICK_STUDIO_MAGICK", "magick")
+    assert os.path.normcase(ip.Magick.detect().convert_cmd[0]) == os.path.normcase(exe)
     monkeypatch.setenv("MAGICK_STUDIO_MAGICK", str(tmp_path / "missing"))
-    with pytest.raises(ip.MagickError, match="missing file"):
+    with pytest.raises(ip.MagickError, match="not an executable"):
         ip.Magick.detect()
+    if sys.platform != "win32":
+        (tmp_path / "custom" / name).chmod(0o644)
+        monkeypatch.setenv("MAGICK_STUDIO_MAGICK", exe)
+        with pytest.raises(ip.MagickError, match="not an executable"):
+            ip.Magick.detect()
 
 
 def test_windows_never_uses_system_convert(tmp_path, monkeypatch):
@@ -578,3 +591,170 @@ def test_windows_hidden_folders_skipped(tmp_path):
     make_image(hidden / "secret.png")
     assert ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2)   # HIDDEN
     assert [p.name for p in ip.scan_folder(tmp_path)] == ["visible.png"]
+
+
+# --- post-release audit (v1.1.0) regressions -------------------------------
+
+def _png_header_only(path: Path, width: int, height: int) -> Path:
+    """A tiny PNG whose header claims huge dimensions (decompression bomb shape)."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+                     + chunk(b"IDAT", zlib.compress(b"\0" * 64)) + chunk(b"IEND", b""))
+    return path
+
+
+@pytest.mark.parametrize("name, content", [
+    ("scan.jpg", b"%!PS\n/Helvetica findfont 40 scalefont setfont 50 400 moveto (X) show showpage\n"),
+    ("vector.png", b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'),
+    ("draw.webp", b"push graphic-context\nviewbox 0 0 10 10\npop graphic-context\n"),
+    ("doc.tif", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"),
+    ("photo.avif", b"\xc5\xd0\xd3\xc6" + b"\0" * 28),   # binary EPS
+    ("script.png", b'<?xml version="1.0"?><image><read filename="a.png"/></image>'),   # MSL
+    ("bom.jpg", b"\xef\xbb\xbf  <svg/>"),
+    ("text.jpeg", b"hello"),
+])
+def test_disguised_non_raster_input_is_refused(tmp_path, monkeypatch, name, content):
+    """Content decides the decoder in ImageMagick: PostScript, SVG, MVG, MSL or
+    PDF named like a photo must never reach Ghostscript or a vector renderer.
+    They are refused before ImageMagick runs at all."""
+    src = tmp_path / name
+    src.write_bytes(content)
+    MAGICK.writable_formats()   # cached; looked up before the input check
+
+    def no_subprocess(*args, **kwargs):
+        raise AssertionError(f"ImageMagick was started for a disguised file: {args}")
+    monkeypatch.setattr(ip.subprocess, "run", no_subprocess)
+    monkeypatch.setattr(ip.subprocess, "Popen", no_subprocess)
+    with pytest.raises(ip.MagickError, match="Not a supported image"):
+        MAGICK.identify(src)
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+    assert not r.ok and "Not a supported image" in r.error
+    assert not (tmp_path / "output").exists() or not os.listdir(tmp_path / "output")
+
+
+def test_misnamed_real_image_still_works(tmp_path):
+    src = make_image(tmp_path / "real.png")
+    misnamed = src.rename(tmp_path / "really a png.jpg")
+    r = ip.process_image(MAGICK, misnamed, ip.Settings(output_format="webp"))
+    assert r.ok, r.error
+    assert MAGICK.identify(r.output).format == "WEBP"
+
+
+@pytest.mark.parametrize("fmt", ["JPEG", "PNG", "GIF", "WEBP", "TIFF", "BMP", "AVIF", "JXL"])
+def test_sniff_coder_matches_real_files(tmp_path, fmt):
+    if fmt not in MAGICK.writable_formats():
+        pytest.skip(f"this ImageMagick cannot write {fmt}")
+    path = tmp_path / "image.bin"
+    subprocess.run(MAGICK.convert_cmd + ["-size", "16x16", "gradient:", f"{fmt}:{path}"],
+                   check=True, **ip.POPEN_FLAGS)
+    assert ip.sniff_coder(path) == fmt
+
+
+@pytest.mark.parametrize("content", [b"", b"\x89PNG\r\n\x1a\n\x00\x00", b"\xff\xd8\xff\xe0garbage"])
+def test_empty_and_truncated_images_fail_cleanly(tmp_path, content):
+    src = tmp_path / "broken.png"
+    src.write_bytes(content)
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="webp"))
+    assert not r.ok and r.error
+    out = tmp_path / "output"
+    assert not out.exists() or not os.listdir(out)
+
+
+def test_huge_dimensions_refused_before_decoding(tmp_path):
+    src = _png_header_only(tmp_path / "bomb.png", 30000, 30000)   # 900 MP, 100 bytes
+    start = time.monotonic()
+    r = ip.process_image(MAGICK, src, ip.web_preset())
+    assert not r.ok and "too large" in r.error
+    assert time.monotonic() - start < 10
+    with pytest.raises(ip.MagickError, match="too large"):
+        ip.thumbnail(MAGICK, src, 64, str(tmp_path / "t.png"))
+    assert not (tmp_path / "output").exists() or not os.listdir(tmp_path / "output")
+
+
+def test_real_errors_hide_paths(tmp_path):
+    folder = tmp_path / "it's private"
+    folder.mkdir()
+    src = folder / "broken.png"
+    src.write_bytes(b"\x89PNG\r\n\x1a\nnot really")
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="webp"))
+    assert not r.ok and r.error
+    assert str(tmp_path) not in r.error and "private" not in r.error
+    assert ip._clean_error(
+        f"magick: unable to open image '{folder}/a.png': No such file or directory @ x") \
+        == "unable to open image: No such file or directory"
+
+
+def _gif_frames(path: Path, frames: int, size: int) -> Path:
+    """A small GIF with many identical, large frames (the frames are copied bytes)."""
+    one = path.with_suffix(".one.gif")
+    subprocess.run(MAGICK.convert_cmd + ["-size", f"{size}x{size}", "xc:red", f"GIF:{one}"],
+                   check=True, **ip.POPEN_FLAGS)
+    data = one.read_bytes()
+    one.unlink()
+    start = 13 + (3 << ((data[10] & 7) + 1) if data[10] & 0x80 else 0)
+    assert data.endswith(b";")
+    path.write_bytes(data[:start] + data[start:-1] * frames + b";")
+    return path
+
+
+def test_animated_frames_cannot_bypass_pixel_limit(tmp_path):
+    """Each frame is under MAX_PIXELS but together they are not; only the first
+    frame may be decoded (all of them took about 2 GB for 8 frames)."""
+    src = _gif_frames(tmp_path / "frames.gif", 16, 4000)          # 256 MP in total
+    assert MAGICK.identify(src).width == 4000
+    assert os.path.getsize(src) < 2_000_000
+    code = (f"import resource, sys; sys.path.insert(0, {str(Path(ip.__file__).parent)!r})\n"
+            "import image_processor as ip\n"
+            f"r = ip.process_image(ip.Magick.detect(), {str(src)!r}, ip.Settings(output_format='png'))\n"
+            "assert r.ok, r.error\n"
+            "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)\n")
+    if sys.platform == "win32":   # no rusage; the bundled policy also caps memory there
+        r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+        assert r.ok, r.error
+        return
+    peak_kb = int(subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                                 check=True, timeout=300).stdout)
+    assert peak_kb < 1_000_000, f"ImageMagick used {peak_kb // 1024} MB"
+    out = tmp_path / "output" / "frames.png"
+    assert dims(out) == (4000, 4000, "PNG")
+
+
+@pytest.mark.parametrize("name", ["p%d.png", "x%03d.png", "z%%.png", "50%.png"])
+def test_percent_in_filename_reads_that_file(tmp_path, name):
+    """With "[0]", ImageMagick expands %d in names; it must not pick another file."""
+    make_image(tmp_path / "p0.png", size="400x400")
+    make_image(tmp_path / "x000.png", size="400x400")
+    src = tmp_path / name   # copied: ImageMagick would expand "%" in an output name
+    src.write_bytes(make_image(tmp_path / "small.png", size="40x30").read_bytes())
+    assert MAGICK.identify(src).width == 40
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+    assert r.ok, r.error
+    assert r.output.name == name and dims(r.output) == (40, 30, "PNG")
+
+
+def test_error_hides_path_with_at_sign(tmp_path):
+    folder = tmp_path / "home @ secret"
+    folder.mkdir()
+    src = folder / "it' s.bmp"
+    src.write_bytes(b"BM" + b"x" * 40)
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+    assert not r.ok and r.error
+    assert "secret" not in r.error and str(tmp_path) not in r.error and "s.bmp" not in r.error
+
+
+def test_percent_name_with_many_frames_stays_bounded(tmp_path):
+    """ImageMagick 6 cannot read only frame 0 of a name with "%" (see _input),
+    so there the total size of all frames is checked instead."""
+    src = _gif_frames(tmp_path / "f.gif", 16, 4000)              # 256 MP in total
+    src = src.rename(tmp_path / "f%d.gif")
+    r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+    if MAGICK.version >= 7:
+        assert r.ok, r.error
+        assert dims(r.output) == (4000, 4000, "PNG")
+    else:
+        assert not r.ok and "too large" in r.error

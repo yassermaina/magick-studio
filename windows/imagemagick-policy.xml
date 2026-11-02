@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policymap [
+  <!ELEMENT policymap (policy)*>
+  <!ATTLIST policymap xmlns CDATA #FIXED "">
+  <!ELEMENT policy EMPTY>
+  <!ATTLIST policy xmlns CDATA #FIXED "" domain NMTOKEN #REQUIRED
+    name NMTOKEN #IMPLIED pattern CDATA #IMPLIED rights NMTOKENS #IMPLIED
+    stealth NMTOKEN #IMPLIED value CDATA #IMPLIED>
+]>
+<!--
+  Magick Studio policy for the bundled ImageMagick (installed as policy.xml).
+  Replaces the portable build's open policy. The app only reads raster photos
+  (each input gets an explicit decoder), so everything that can run external
+  programs, render scripts or read other files and URLs is denied.
+-->
+<policymap>
+  <!-- Resource limits: large photos still work, crafted files cannot take the machine. -->
+  <policy domain="resource" name="memory" value="2GiB"/>
+  <policy domain="resource" name="map" value="4GiB"/>
+  <policy domain="resource" name="disk" value="8GiB"/>
+  <policy domain="resource" name="width" value="256KP"/>
+  <policy domain="resource" name="height" value="256KP"/>
+  <policy domain="resource" name="list-length" value="128"/>
+  <!-- No external programs (Ghostscript, etc.). -->
+  <policy domain="delegate" rights="none" pattern="*"/>
+  <!-- Vector, document, script, text, network, file-handle and screen coders. -->
+  <policy domain="coder" rights="none" pattern="{PS,PS2,PS3,EPS,EPSF,EPSI,EPI,EPT,PDF,PDFA,AI,XPS,PCL,SVG,SVGZ,MSVG,RSVG,MVG,MSL,TEXT,TXT,LABEL,CAPTION,PANGO,URL,HTTP,HTTPS,FTP,EPHEMERAL,INLINE,HTML,SHOW,WIN,X,VID,TMP,MPC,CACHE,FD,MPR,MPRI,WMF,EMF,CLIPBOARD,SCREENSHOT}"/>
+  <!-- No "@file" argument lists. -->
+  <policy domain="path" rights="none" pattern="@*"/>
+</policymap>
