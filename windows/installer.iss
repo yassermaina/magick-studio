@@ -1,5 +1,5 @@
 ; Inno Setup script for Magick Studio (per-user install, no admin rights).
-; Built by windows/build.ps1:  ISCC /DAppVersion=1.1.0 /DSourceDir=... /DOutputDir=...
+; Built by windows/build.ps1:  ISCC /DAppVersion=1.1.1 /DSourceDir=... /DOutputDir=...
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"

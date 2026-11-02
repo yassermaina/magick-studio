@@ -87,12 +87,17 @@ jobs:
       - name: Build installer (Inno Setup)
         run: ./windows/build.ps1 -Steps installer
 
-      - name: Install, upgrade and uninstall
+      - name: Install, reinstall and uninstall
         run: |
           $setup = (Get-ChildItem build/windows/installer/MagickStudio-Setup-*-x64.exe).FullName
           python windows/ci/winci.py install-test $setup $env:WORK
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-FileHash $setup -Algorithm SHA256 | Format-List Algorithm, Hash, Path
+
+      - name: Upgrade from the published previous release
+        run: |
+          $setup = (Get-ChildItem build/windows/installer/MagickStudio-Setup-*-x64.exe).FullName
+          python windows/ci/winci.py upgrade-test $setup $env:WORK
 
       - name: Upload installer
         if: always()

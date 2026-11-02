@@ -361,7 +361,7 @@ def test_command_never_uses_shell(tmp_path):
     src, tmp = make_image(tmp_path / "a b.png"), tmp_path / "t.tmp"
     cmd = ip.build_command(MAGICK, src, str(tmp), ip.web_preset())
     assert isinstance(cmd, list)
-    assert f"PNG:{src.absolute()}" in cmd and cmd[-1] == f"WEBP:{tmp}"
+    assert f"PNG:{src.absolute()}[0]" in cmd and cmd[-1] == f"WEBP:{tmp}"
 
 
 def test_parse_writable_formats():
@@ -613,12 +613,23 @@ def _png_header_only(path: Path, width: int, height: int) -> Path:
     ("vector.png", b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'),
     ("draw.webp", b"push graphic-context\nviewbox 0 0 10 10\npop graphic-context\n"),
     ("doc.tif", b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"),
+    ("photo.avif", b"\xc5\xd0\xd3\xc6" + b"\0" * 28),   # binary EPS
+    ("script.png", b'<?xml version="1.0"?><image><read filename="a.png"/></image>'),   # MSL
+    ("bom.jpg", b"\xef\xbb\xbf  <svg/>"),
+    ("text.jpeg", b"hello"),
 ])
-def test_disguised_non_raster_input_is_refused(tmp_path, name, content):
-    """Content decides the decoder in ImageMagick: PostScript, SVG, MVG or PDF
-    named like a photo must never reach Ghostscript or a vector renderer."""
+def test_disguised_non_raster_input_is_refused(tmp_path, monkeypatch, name, content):
+    """Content decides the decoder in ImageMagick: PostScript, SVG, MVG, MSL or
+    PDF named like a photo must never reach Ghostscript or a vector renderer.
+    They are refused before ImageMagick runs at all."""
     src = tmp_path / name
     src.write_bytes(content)
+    MAGICK.writable_formats()   # cached; looked up before the input check
+
+    def no_subprocess(*args, **kwargs):
+        raise AssertionError(f"ImageMagick was started for a disguised file: {args}")
+    monkeypatch.setattr(ip.subprocess, "run", no_subprocess)
+    monkeypatch.setattr(ip.subprocess, "Popen", no_subprocess)
     with pytest.raises(ip.MagickError, match="Not a supported image"):
         MAGICK.identify(src)
     r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
@@ -676,3 +687,38 @@ def test_real_errors_hide_paths(tmp_path):
     assert ip._clean_error(
         f"magick: unable to open image '{folder}/a.png': No such file or directory @ x") \
         == "unable to open image: No such file or directory"
+
+
+def _gif_frames(path: Path, frames: int, size: int) -> Path:
+    """A small GIF with many identical, large frames (the frames are copied bytes)."""
+    one = path.with_suffix(".one.gif")
+    subprocess.run(MAGICK.convert_cmd + ["-size", f"{size}x{size}", "xc:red", f"GIF:{one}"],
+                   check=True, **ip.POPEN_FLAGS)
+    data = one.read_bytes()
+    one.unlink()
+    start = 13 + (3 << ((data[10] & 7) + 1) if data[10] & 0x80 else 0)
+    assert data.endswith(b";")
+    path.write_bytes(data[:start] + data[start:-1] * frames + b";")
+    return path
+
+
+def test_animated_frames_cannot_bypass_pixel_limit(tmp_path):
+    """Each frame is under MAX_PIXELS but together they are not; only the first
+    frame may be decoded (all of them took about 2 GB for 8 frames)."""
+    src = _gif_frames(tmp_path / "frames.gif", 16, 4000)          # 256 MP in total
+    assert MAGICK.identify(src).width == 4000
+    assert os.path.getsize(src) < 2_000_000
+    code = (f"import resource, sys; sys.path.insert(0, {str(Path(ip.__file__).parent)!r})\n"
+            "import image_processor as ip\n"
+            f"r = ip.process_image(ip.Magick.detect(), {str(src)!r}, ip.Settings(output_format='png'))\n"
+            "assert r.ok, r.error\n"
+            "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)\n")
+    if sys.platform == "win32":   # no rusage; the bundled policy also caps memory there
+        r = ip.process_image(MAGICK, src, ip.Settings(output_format="png"))
+        assert r.ok, r.error
+        return
+    peak_kb = int(subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                                 check=True, timeout=300).stdout)
+    assert peak_kb < 1_000_000, f"ImageMagick used {peak_kb // 1024} MB"
+    out = tmp_path / "output" / "frames.png"
+    assert dims(out) == (4000, 4000, "PNG")

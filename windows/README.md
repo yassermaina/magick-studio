@@ -84,7 +84,7 @@ python windows\ci\winci.py bundle-check build\windows\dist\MagickStudio
 python windows\ci\winci.py smoke build\windows\dist\MagickStudio\MagickStudio.exe build\ci\samples build\ci
 python windows\ci\winci.py gui-check build\windows\dist\MagickStudio\MagickStudio.exe build\ci\samples build\ci\gui.json
 python windows\ci\winci.py console-check build\windows\dist\MagickStudio\MagickStudio.exe build\ci\samples build\ci
-python windows\ci\winci.py install-test build\windows\installer\MagickStudio-Setup-1.1.0-x64.exe build\ci
+python windows\ci\winci.py install-test build\windows\installer\MagickStudio-Setup-1.1.1-x64.exe build\ci
 ```
 
 `smoke` and `gui-check` run the app with a minimal `PATH`, so they fail if it uses
